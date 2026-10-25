@@ -512,6 +512,7 @@ language sql stable as $$
     ) n
     where w.hops < least(greatest(p_hops, 1), 2)
       and not n.id = any (w.path)
+      and public.served(n.id)   -- never walk through an entity consumers can't see
       and (p_predicate is null or n.predicate = p_predicate)
   )
   select distinct on (e.slug) e.slug, e.name, e.kind, w.predicate, w.direction, w.hops
@@ -542,10 +543,19 @@ alter table public.source_text enable row level security;   -- no policy: servic
 alter table public.proposal enable row level security;      -- no policy: service role only
 alter table public.run_log enable row level security;       -- no policy: service role only
 
-create policy "published entities" on public.entity for select to anon, authenticated using (status = 'published');
-create policy "published claims" on public.claim for select to anon, authenticated using (status = 'published');
-create policy "published evidence" on public.evidence for select to anon, authenticated using (status = 'published');
-create policy "published aliases" on public.alias for select to anon, authenticated using (status = 'published');
+-- The same rules as the read functions, so raw REST serves no more than they do:
+-- credited quotes, claims that still have one, entities with such a claim (spelled
+-- out rather than served(), which reads entity and would recurse into this policy)
+create policy "served entities" on public.entity for select to anon, authenticated using (
+  status = 'published'
+  and exists (select 1 from public.claim c
+              where c.entity_id = entity.id and c.status = 'published' and public.has_credit(c.id)));
+create policy "credited claims" on public.claim for select to anon, authenticated using (
+  status = 'published' and public.has_credit(id));
+create policy "credited evidence" on public.evidence for select to anon, authenticated using (
+  status = 'published' and public.credited(source_id));
+create policy "served aliases" on public.alias for select to anon, authenticated using (
+  status = 'published' and (claim_id is null or public.has_credit(claim_id)));
 create policy "sources" on public.source for select to anon, authenticated using (true);
 create policy "source creators" on public.source_creator for select to anon, authenticated using (true);
 create policy "creators" on public.creator for select to anon, authenticated using (true);

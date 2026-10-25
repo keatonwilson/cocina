@@ -1,6 +1,6 @@
 -- Citation rules and the publish gate. Run: supabase test db
 begin;
-select plan(22);
+select plan(24);
 
 -- Deferred constraint triggers fire at commit, which a test never reaches:
 -- run the statement, then flush the checks, then go back to deferred.
@@ -112,6 +112,11 @@ select pg_temp.committed('select accept_proposal((select id from proposal where 
 update creator set do_not_use = true where name = 'Solo Author';
 select is(get_entity('molote'), null, 'an entity left with no credited claim is no longer served');
 select is((select count(*) from search_entities('molote')), 0::bigint, 'nor found by search');
+set local role anon;
+select is((select count(*) from evidence where quote = 'molotes from Veracruz'), 0::bigint,
+  'raw REST hides the opted-out quote too');
+select is((select count(*) from entity where slug = 'molote'), 0::bigint, 'and the entity it left without credit');
+reset role;
 
 insert into proposal (author, rationale) values ('test', 'p7');
 select lives_ok(
