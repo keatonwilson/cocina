@@ -1,5 +1,10 @@
-"""The pipeline's pure logic: the quote check, grouping and page text. No network, no DB."""
+"""The pipeline logic that needs no network or DB: quote check, grouping, page text, robots and noai."""
 
+from email.message import Message
+
+import pytest
+
+from cocina import fetch
 from cocina.fetch import html_to_text
 from cocina.research import group_claims, quote_found
 
@@ -39,3 +44,38 @@ def test_page_text_skips_chrome_and_sees_noai():
     assert title == "Birria"
     assert text == "Birria is from Jalisco."
     assert noai
+
+
+def test_robots_txt_follows_rfc_9309(monkeypatch):
+    replies = {
+        "https://gone.example": (404, Message(), b""),               # missing: allowed
+        "https://down.example": (503, Message(), b""),               # server error: disallowed
+        "https://private.example": (403, Message(), b""),            # forbidden: disallowed
+        "https://unreachable.example": ConnectionResetError(),       # no answer: disallowed
+        "https://rules.example": (200, Message(), b"User-agent: *\nDisallow: /private\n"),
+    }
+
+    def fake_get(url):
+        reply = replies[url.removesuffix("/robots.txt")]
+        if isinstance(reply, Exception):
+            raise reply
+        return reply
+
+    monkeypatch.setattr(fetch, "_get", fake_get)
+    monkeypatch.setattr(fetch, "_robots", {})
+    assert fetch.allowed("https://gone.example/a")
+    assert not fetch.allowed("https://down.example/a")
+    assert not fetch.allowed("https://private.example/a")
+    assert not fetch.allowed("https://unreachable.example/a")
+    assert fetch.allowed("https://rules.example/a")
+    assert not fetch.allowed("https://rules.example/private/a")
+
+
+def test_noai_header_skips_the_page(monkeypatch):
+    headers = Message()
+    headers["Content-Type"] = "text/html"
+    headers["X-Robots-Tag"] = "noai"
+    monkeypatch.setattr(fetch, "allowed", lambda url: True)
+    monkeypatch.setattr(fetch, "_get", lambda url: (200, headers, b"<p>" + b"words " * 100 + b"</p>"))
+    with pytest.raises(fetch.Skipped, match="noai"):
+        fetch.fetch_page("https://example.com/page")

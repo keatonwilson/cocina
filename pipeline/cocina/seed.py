@@ -58,12 +58,14 @@ def seed() -> None:
     for name, aliases in MENU_CATEGORIES:
         rows.append((slugify(name), "menu_category", name, "Menu category tracked by cartoTaco.", aliases))
 
-    have = {e["slug"] for e in db().table("entity").select("slug").execute().data}
+    have = {e["slug"]: e["kind"] for e in db().table("entity").select("slug, kind").execute().data}
     added = 0
     for slug, kind, name, note, aliases in rows:
         if slug in have:
+            if have[slug] != kind:  # e.g. a dish and a protein prep both called Birria
+                print(f"skipped {name!r} ({kind}): slug {slug!r} is already a {have[slug]}")
             continue
-        have.add(slug)
+        have[slug] = kind
         entity = db().table("entity").insert({"slug": slug, "kind": kind, "name": name, "note": note}).execute().data[0]
         names = {norm(n): n for n in [name, *aliases]}               # dedupe by normalised form
         db().table("alias").insert([{"entity_id": entity["id"], "text": n} for n in names.values()]).execute()

@@ -152,7 +152,11 @@ def extract(ai: anthropic.Anthropic, entity: dict, aliases: list[str], predicate
     return resp.parsed_output, _cost(resp.usage)
 
 
-def save_source(page: dict, meta) -> int:
+def save_source(page: dict, meta) -> int | None:
+    """Store a page as a credited source. None, and nothing stored, when a creator opted out."""
+    creators = [db().rpc("creator_id", {"p_name": name}).execute().data for name in meta.authors]
+    if creators and db().table("creator").select("id").in_("id", creators).eq("do_not_use", True).execute().data:
+        return None
     published_on = meta.published_on if meta.published_on and len(meta.published_on) == 10 else None
     row = db().table("source").upsert({
         "url": page["url"],
@@ -163,8 +167,7 @@ def save_source(page: dict, meta) -> int:
         "fetched_at": page["fetched_at"],
     }, on_conflict="url").execute().data[0]
     db().table("source_text").upsert({"source_id": row["id"], "text": page["text"]}).execute()
-    for name in meta.authors:
-        creator = db().rpc("creator_id", {"p_name": name}).execute().data
+    for creator in creators:
         db().table("source_creator").upsert({"source_id": row["id"], "creator_id": creator}).execute()
     return row["id"]
 
@@ -185,7 +188,9 @@ def research(slug: str) -> dict:
     aliases = [a["text"] for a in db().table("alias").select("text").eq("entity_id", entity["id"])
                .in_("status", ["proposed", "published"]).execute().data
                if norm(a["text"]) != norm(entity["name"])]
-    predicates = [p["name"] for p in db().table("predicate").select("name").eq("kind", entity["kind"]).execute().data]
+    # predicate → whether it may link to another entity
+    links = {p["name"]: p["links"] for p in
+             db().table("predicate").select("name, links").eq("kind", entity["kind"]).execute().data}
     run = db().table("run_log").insert({"agent": "research"}).execute().data[0]
     errors, cost, proposals = [], 0.0, 0
 
@@ -208,7 +213,7 @@ def research(slug: str) -> dict:
         if not pages:
             raise RuntimeError("no usable pages")
 
-        out, c = extract(ai, entity, aliases, predicates, pages)
+        out, c = extract(ai, entity, aliases, list(links), pages)
         cost += c
         meta = {m.index: m for m in out.pages}
 
@@ -220,20 +225,31 @@ def research(slug: str) -> dict:
             else:
                 errors.append({"dropped": cl.model_dump(), "why": "quote not found on the page"})
 
-        source_ids: dict[int, int] = {}
+        source_ids: dict[int, int | None] = {}   # page → source id; None when a creator opted out
         live = db().table("claim").select("id, predicate, value, status, proposal_id") \
             .eq("entity_id", entity["id"]).in_("status", ["proposed", "published"]).execute().data
         existing = {(c["predicate"], norm(c["value"])): c for c in live}
-        # Every alias, rejected ones too: the unique key on (entity, norm(text)) covers them all
+        # Live aliases, the ones the unique key on (entity, norm(text)) covers
         names = {norm(entity["name"])} | {norm(a["text"]) for a in db().table("alias").select("text")
-                                          .eq("entity_id", entity["id"]).execute().data}
+                                          .eq("entity_id", entity["id"]).in_("status", ["proposed", "published"])
+                                          .execute().data}
 
         for g in group_claims(kept):
             for e in g["evidence"]:
                 if e["page"] not in source_ids:
-                    source_ids[e["page"]] = save_source(pages[e["page"] - 1], meta.get(e["page"]) or _bare(pages[e["page"] - 1]))
-            hosts = sorted({urlsplit(pages[e["page"] - 1]["url"]).netloc.removeprefix("www.") for e in g["evidence"]})
+                    page = pages[e["page"] - 1]
+                    source_ids[e["page"]] = save_source(page, meta.get(e["page"]) or _bare(page))
+                    if source_ids[e["page"]] is None:
+                        errors.append({"url": page["url"], "skipped": "a creator opted out (do_not_use)"})
             old = existing.get((g["predicate"], norm(g["value"])))
+            # Sources already behind this claim, in any status: (claim, source) is unique,
+            # so a proposal of them would come out empty
+            cited = {r["source_id"] for r in db().table("evidence").select("source_id")
+                     .eq("claim_id", old["id"]).execute().data} if old else set()
+            evidence = [e for e in g["evidence"] if source_ids[e["page"]] not in (None, *cited)]
+            if not evidence:
+                continue
+            hosts = sorted({urlsplit(pages[e["page"] - 1]["url"]).netloc.removeprefix("www.") for e in evidence})
             if old and old["status"] == "proposed":
                 claim_id, proposal_id = old["id"], old["proposal_id"]        # pending: just add evidence
             else:
@@ -248,7 +264,8 @@ def research(slug: str) -> dict:
                 else:
                     claim_id = db().table("claim").insert({
                         "entity_id": entity["id"], "predicate": g["predicate"], "value": g["value"],
-                        "object_id": link(g["object_name"]), "proposal_id": proposal_id,
+                        "object_id": link(g["object_name"]) if links[g["predicate"]] else None,
+                        "proposal_id": proposal_id,
                     }).execute().data[0]["id"]
                     if g["predicate"] == "also_known_as" and norm(g["value"]) not in names:
                         names.add(norm(g["value"]))
@@ -259,7 +276,7 @@ def research(slug: str) -> dict:
             db().table("evidence").upsert([{
                 "claim_id": claim_id, "source_id": source_ids[e["page"]], "quote": e["quote"],
                 "fetched_at": pages[e["page"] - 1]["fetched_at"], "proposal_id": proposal_id,
-            } for e in g["evidence"]], on_conflict="claim_id,source_id", ignore_duplicates=True).execute()
+            } for e in evidence], on_conflict="claim_id,source_id", ignore_duplicates=True).execute()
     except Exception as e:
         errors.append({"error": repr(e)})
         raise
