@@ -1,11 +1,13 @@
 // The read-only MCP server: published knowledge only, with credit on every answer.
 // Stateless Streamable HTTP (JSON responses), so it runs as a plain serverless function.
+import { createHash, timingSafeEqual } from 'node:crypto';
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { WebStandardStreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/webStandardStreamableHttp.js';
 import { createClient } from '@supabase/supabase-js';
 import { z } from 'zod';
 import { dev } from '$app/environment';
 import { env } from '$env/dynamic/private';
+import { sourcesOf } from '$lib/sources.js';
 
 // The anon key: RLS and the read functions only ever return published rows
 const db = () =>
@@ -25,19 +27,6 @@ async function reply(data, isError = false) {
 }
 
 const CREDIT_NOTE = 'Show credit (authors or publisher, with links) wherever you use these facts.';
-
-/** One entry per work cited on a card, with the facts it supports. */
-function sourcesOf(card) {
-  const works = new Map();
-  for (const claim of card.claims) {
-    for (const { quote, locator, ...work } of claim.sources) {
-      const key = work.url || `${work.publisher}|${work.title}`;
-      if (!works.has(key)) works.set(key, { ...work, supports: [] });
-      works.get(key).supports.push(`${claim.predicate}: ${claim.value}`);
-    }
-  }
-  return [...works.values()];
-}
 
 function server() {
   const mcp = new McpServer({ name: 'cocina', version: '0.1.0' });
@@ -97,10 +86,14 @@ function server() {
   return mcp;
 }
 
-async function handle({ request }) {
+// Constant-time comparison of the Authorization header with the expected one
+const digest = (s) => createHash('sha256').update(s).digest();
+const authorized = (header) => timingSafeEqual(digest(header ?? ''), digest(`Bearer ${env.MCP_TOKEN}`));
+
+export async function POST({ request }) {
   // ponytail: one shared bearer token until we decide whether the knowledge is public
   if (!env.MCP_TOKEN && !dev) return new Response('MCP_TOKEN is not configured', { status: 500 });
-  if (env.MCP_TOKEN && request.headers.get('authorization') !== `Bearer ${env.MCP_TOKEN}`) {
+  if (env.MCP_TOKEN && !authorized(request.headers.get('authorization'))) {
     return new Response('Unauthorized', { status: 401 });
   }
   const transport = new WebStandardStreamableHTTPServerTransport({ sessionIdGenerator: undefined, enableJsonResponse: true });
@@ -108,6 +101,9 @@ async function handle({ request }) {
   return transport.handleRequest(request);
 }
 
-export const POST = handle;
-export const GET = handle;
-export const DELETE = handle;
+// Stateless: there's no session for a GET stream to follow or a DELETE to end.
+// A 405 tells MCP clients to carry on with POST only, instead of holding a
+// stream open until the function times out.
+const postOnly = () => new Response(null, { status: 405, headers: { Allow: 'POST' } });
+export const GET = postOnly;
+export const DELETE = postOnly;
