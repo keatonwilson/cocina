@@ -10,6 +10,11 @@ on:
       - '.github/workflows/migrate.yml'
   workflow_dispatch:
 
+# Never two pushes to the same database at once
+concurrency:
+  group: migrate
+  cancel-in-progress: false
+
 jobs:
   migrate:
     runs-on: ubuntu-latest
@@ -17,7 +22,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: supabase/setup-cli@v1
         with:
-          version: latest
+          version: 2.119.0   # the same CLI as ci.yml, so tests and production agree
       - run: |
           supabase db push --db-url "$SUPABASE_DB_URL"
           supabase migration list --db-url "$SUPABASE_DB_URL"

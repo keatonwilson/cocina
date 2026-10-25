@@ -12,7 +12,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: supabase/setup-cli@v1
         with:
-          version: latest
+          version: 2.119.0   # keep in step with migrate.yml
       - run: supabase db start
       - run: supabase test db
 
@@ -46,3 +46,4 @@ jobs:
           cache-dependency-path: app/pnpm-lock.yaml
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
+      - run: pnpm test
