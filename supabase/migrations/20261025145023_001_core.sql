@@ -229,6 +229,14 @@ language sql stable as $$
                  where claim_id = p_claim and status = 'published' and public.credited(source_id))
 $$;
 
+-- What consumers see: a published entity with at least one claim still credited
+create function public.served(p_entity bigint) returns boolean
+language sql stable as $$
+  select exists (select 1 from public.entity where id = p_entity and status = 'published')
+    and exists (select 1 from public.claim c
+                where c.entity_id = p_entity and c.status = 'published' and public.has_credit(c.id))
+$$;
+
 create function public.assert_claim_ok(p_claim bigint) returns void
 language plpgsql as $$
 declare
@@ -266,6 +274,15 @@ language plpgsql as $$
 declare
   ev public.evidence;
 begin
+  -- Only published quotes carry credit. A proposed or rejected one can't take any
+  -- away, and must stay writable so a claim that lost its credit can win it back
+  if tg_op = 'INSERT' then
+    if new.status <> 'published' then return null; end if;
+  elsif tg_op = 'UPDATE' then
+    if new.status <> 'published' and old.status <> 'published' then return null; end if;
+  elsif old.status <> 'published' then
+    return null;
+  end if;
   -- Every published quote needs credit, not just one per claim
   select * into ev from public.evidence where id = coalesce(new.id, old.id);
   if found and ev.status = 'published' and not public.credited(ev.source_id) then
@@ -378,13 +395,14 @@ language sql stable as $$
     'aliases', coalesce((
       select jsonb_agg(a.text order by a.text) from public.alias a
       where a.entity_id = e.id and a.status = 'published' and public.norm(a.text) <> public.norm(e.name)
+        and (a.claim_id is null or public.has_credit(a.claim_id))
     ), '[]'),
     'claims', coalesce((
       select jsonb_agg(jsonb_build_object(
         'predicate', c.predicate,
         'value', c.value,
         'object', (select jsonb_build_object('slug', o.slug, 'name', o.name)
-                   from public.entity o where o.id = c.object_id and o.status = 'published'),
+                   from public.entity o where o.id = c.object_id and public.served(o.id)),
         'confidence', ev.independent,   -- distinct sites or works that agree
         'verified_at', ev.verified_at,
         'sources', ev.sources
@@ -419,21 +437,21 @@ language sql stable as $$
       select jsonb_agg(jsonb_build_object('slug', f.slug, 'name', f.name, 'predicate', c.predicate)
                        order by f.slug)
       from public.claim c join public.entity f on f.id = c.entity_id
-      where c.object_id = e.id and c.status = 'published' and f.status = 'published' and public.has_credit(c.id)
+      where c.object_id = e.id and c.status = 'published' and public.served(f.id) and public.has_credit(c.id)
     ), '[]')
   )
   from public.entity e
-  where e.id = p_entity and e.status = 'published'
+  where e.id = p_entity and public.served(e.id)
 $$;
 
 create function public.cards() returns setof jsonb
 language sql stable as $$
-  select public.card(id) from public.entity where status = 'published' order by slug
+  select public.card(id) from public.entity where public.served(id) order by slug
 $$;
 
 create function public.get_entity(p_slug text) returns jsonb
 language sql stable as $$
-  select public.card(id) from public.entity where slug = p_slug and status = 'published'
+  select public.card(id) from public.entity where slug = p_slug and public.served(id)
 $$;
 
 -- Name and alias match: exact, then typo-tolerant (1 edit from 4 letters,
@@ -446,11 +464,11 @@ returns table (slug text, name text, kind text, matched text, distance int)
 language sql stable as $$
   with names as (
     select e.slug, e.name, e.kind, e.name as label from public.entity e
-    where e.status = 'published' or (p_all and e.status = 'proposed')
+    where public.served(e.id) or (p_all and e.status in ('published', 'proposed'))
     union all
     select e.slug, e.name, e.kind, a.text from public.alias a
     join public.entity e on e.id = a.entity_id
-    where (e.status = 'published' and a.status = 'published')
+    where (public.served(e.id) and a.status = 'published' and (a.claim_id is null or public.has_credit(a.claim_id)))
        or (p_all and e.status in ('published', 'proposed') and a.status in ('published', 'proposed'))
   ),
   scored as (
@@ -481,7 +499,7 @@ returns table (slug text, name text, kind text, predicate text, direction text, 
 language sql stable as $$
   with recursive walk (id, predicate, direction, hops, path) as (
     select e.id, null::text, null::text, 0, array[e.id]
-    from public.entity e where e.slug = p_slug and e.status = 'published'
+    from public.entity e where e.slug = p_slug and public.served(e.id)
     union all
     select n.id, n.predicate, n.direction, w.hops + 1, w.path || n.id
     from walk w
@@ -497,7 +515,7 @@ language sql stable as $$
       and (p_predicate is null or n.predicate = p_predicate)
   )
   select distinct on (e.slug) e.slug, e.name, e.kind, w.predicate, w.direction, w.hops
-  from walk w join public.entity e on e.id = w.id and e.status = 'published'
+  from walk w join public.entity e on e.id = w.id and public.served(e.id)
   where w.hops > 0
   order by e.slug, w.hops
 $$;

@@ -1,6 +1,6 @@
 -- Citation rules and the publish gate. Run: supabase test db
 begin;
-select plan(18);
+select plan(22);
 
 -- Deferred constraint triggers fire at commit, which a test never reaches:
 -- run the statement, then flush the checks, then go back to deferred.
@@ -95,6 +95,32 @@ select is((select jsonb_array_length(get_entity('chavindeca') #> '{claims,0,sour
 update creator set do_not_use = true where name = 'Later Opted Out';
 select is((select jsonb_array_length(get_entity('chavindeca') #> '{claims,0,sources}')), 1,
   'a creator who opts out later is no longer served');
+
+-- An entity whose only credit opts out disappears, and a new source can bring it back
+insert into creator (name) values ('Solo Author');
+insert into source (url, title) values ('https://solo.example/molote', 'Molotes');
+insert into source_creator values ((select id from source where url = 'https://solo.example/molote'),
+                                   (select id from creator where name = 'Solo Author'));
+insert into entity (slug, kind, name) values ('molote', 'dish', 'Molote');
+insert into proposal (author, rationale) values ('test', 'p6');
+insert into claim (entity_id, predicate, value, proposal_id)
+values ((select id from entity where slug = 'molote'), 'originates_in', 'Veracruz', (select id from proposal where rationale = 'p6'));
+insert into evidence (claim_id, source_id, quote, proposal_id)
+values ((select id from claim where value = 'Veracruz'), (select id from source where url = 'https://solo.example/molote'),
+        'molotes from Veracruz', (select id from proposal where rationale = 'p6'));
+select pg_temp.committed('select accept_proposal((select id from proposal where rationale = ''p6''), ''tester'')');
+update creator set do_not_use = true where name = 'Solo Author';
+select is(get_entity('molote'), null, 'an entity left with no credited claim is no longer served');
+select is((select count(*) from search_entities('molote')), 0::bigint, 'nor found by search');
+
+insert into proposal (author, rationale) values ('test', 'p7');
+select lives_ok(
+  $$ select pg_temp.committed('insert into evidence (claim_id, source_id, quote, proposal_id) values (
+       (select id from claim where value = ''Veracruz''), (select id from source where url = ''https://example.com/chavindeca''),
+       ''molotes are from Veracruz'', (select id from proposal where rationale = ''p7''))') $$,
+  'a claim that lost its credit can still take new evidence');
+select pg_temp.committed('select accept_proposal((select id from proposal where rationale = ''p7''), ''tester'')');
+select is(get_entity('molote') #>> '{claims,0,sources,0,publisher}', 'Example Eats', 'and a new credited source brings it back');
 
 -- A rejected name doesn't block the same name proposed again
 insert into proposal (author, rationale) values ('test', 'p5');
