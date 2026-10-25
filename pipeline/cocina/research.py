@@ -210,6 +210,8 @@ def research(slug: str) -> dict:
             except Skipped as e:
                 errors.append({"url": url, "skipped": str(e)})
                 continue
+            if any(p["url"] == page["url"] for p in pages):
+                continue  # another result redirected to the same page
             if len(page["text"]) > PAGE_CHARS:
                 errors.append({"url": url, "capped": f"{len(page['text'])} chars cut to {PAGE_CHARS}"})
                 page["text"] = page["text"][:PAGE_CHARS]
