@@ -1,6 +1,6 @@
 -- Citation rules and the publish gate. Run: supabase test db
 begin;
-select plan(24);
+select plan(25);
 
 -- Deferred constraint triggers fire at commit, which a test never reaches:
 -- run the statement, then flush the checks, then go back to deferred.
@@ -102,6 +102,7 @@ insert into source (url, title) values ('https://solo.example/molote', 'Molotes'
 insert into source_creator values ((select id from source where url = 'https://solo.example/molote'),
                                    (select id from creator where name = 'Solo Author'));
 insert into entity (slug, kind, name) values ('molote', 'dish', 'Molote');
+insert into alias (entity_id, text) values ((select id from entity where slug = 'molote'), 'molote');
 insert into proposal (author, rationale) values ('test', 'p6');
 insert into claim (entity_id, predicate, value, proposal_id)
 values ((select id from entity where slug = 'molote'), 'originates_in', 'Veracruz', (select id from proposal where rationale = 'p6'));
@@ -116,6 +117,7 @@ set local role anon;
 select is((select count(*) from evidence where quote = 'molotes from Veracruz'), 0::bigint,
   'raw REST hides the opted-out quote too');
 select is((select count(*) from entity where slug = 'molote'), 0::bigint, 'and the entity it left without credit');
+select is((select count(*) from alias where text = 'molote'), 0::bigint, 'and that entity''s names');
 reset role;
 
 insert into proposal (author, rationale) values ('test', 'p7');

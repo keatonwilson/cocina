@@ -555,7 +555,9 @@ create policy "credited claims" on public.claim for select to anon, authenticate
 create policy "credited evidence" on public.evidence for select to anon, authenticated using (
   status = 'published' and public.credited(source_id));
 create policy "served aliases" on public.alias for select to anon, authenticated using (
-  status = 'published' and (claim_id is null or public.has_credit(claim_id)));
+  status = 'published' and (claim_id is null or public.has_credit(claim_id))
+  -- the entity's own policy decides whether it is served
+  and exists (select 1 from public.entity e where e.id = alias.entity_id));
 create policy "sources" on public.source for select to anon, authenticated using (true);
 create policy "source creators" on public.source_creator for select to anon, authenticated using (true);
 create policy "creators" on public.creator for select to anon, authenticated using (true);
