@@ -175,7 +175,9 @@ create table public.alias (
   status public.kb_status not null default 'proposed',
   proposal_id bigint references public.proposal
 );
-create unique index alias_key on public.alias (entity_id, public.norm(text));
+-- Live names only, so a rejected alias doesn't block the same name proposed again
+create unique index alias_key on public.alias (entity_id, public.norm(text))
+  where status in ('proposed', 'published');
 
 -- ---------------------------------------------------------------------------
 -- Rules checked as rows are written
@@ -203,6 +205,30 @@ for each row execute function public.check_claim_predicate();
 
 -- Citation rules, checked at commit so a whole proposal is judged at once.
 
+-- A source counts as credit when it names a person or a publisher and none of
+-- its creators opted out
+create function public.credited(p_source bigint) returns boolean
+language sql stable as $$
+  select exists (
+      select 1 from public.source s
+      where s.id = p_source
+        and (s.publisher is not null or exists (select 1 from public.source_creator sc where sc.source_id = s.id))
+    )
+    and not exists (
+      select 1 from public.source_creator sc
+      join public.creator cr on cr.id = sc.creator_id
+      where sc.source_id = p_source and cr.do_not_use
+    )
+$$;
+
+-- A published claim is served only while a published quote behind it is still
+-- credited, so a creator who opts out after publication drops out of every card
+create function public.has_credit(p_claim bigint) returns boolean
+language sql stable as $$
+  select exists (select 1 from public.evidence
+                 where claim_id = p_claim and status = 'published' and public.credited(source_id))
+$$;
+
 create function public.assert_claim_ok(p_claim bigint) returns void
 language plpgsql as $$
 declare
@@ -212,16 +238,7 @@ begin
   if not found then return; end if;
 
   if c.status = 'published' then
-    if not exists (
-      select 1 from public.evidence ev
-      join public.source s on s.id = ev.source_id
-      where ev.claim_id = c.id and ev.status = 'published'
-        and (s.publisher is not null
-             or exists (select 1 from public.source_creator sc where sc.source_id = s.id))
-        and not exists (select 1 from public.source_creator sc
-                        join public.creator cr on cr.id = sc.creator_id
-                        where sc.source_id = s.id and cr.do_not_use)
-    ) then
+    if not public.has_credit(c.id) then
       raise exception 'claim % is published without credited evidence', c.id;
     end if;
     if c.object_id is not null
@@ -246,7 +263,14 @@ end $$;
 
 create function public.trg_evidence_ok() returns trigger
 language plpgsql as $$
+declare
+  ev public.evidence;
 begin
+  -- Every published quote needs credit, not just one per claim
+  select * into ev from public.evidence where id = coalesce(new.id, old.id);
+  if found and ev.status = 'published' and not public.credited(ev.source_id) then
+    raise exception 'evidence % is published without credit, or from a creator who opted out', ev.id;
+  end if;
   perform public.assert_claim_ok(coalesce(new.claim_id, old.claim_id));
   return null;
 end $$;
@@ -386,16 +410,16 @@ language sql stable as $$
           max(ev.fetched_at) as verified_at
         from public.evidence ev
         join public.source s on s.id = ev.source_id
-        where ev.claim_id = c.id and ev.status = 'published'
+        where ev.claim_id = c.id and ev.status = 'published' and public.credited(ev.source_id)
       ) ev
-      where c.entity_id = e.id and c.status = 'published'
+      where c.entity_id = e.id and c.status = 'published' and public.has_credit(c.id)
     ), '[]'),
     -- Incoming links: "chavindeca is a variant_of this"
     'linked_from', coalesce((
       select jsonb_agg(jsonb_build_object('slug', f.slug, 'name', f.name, 'predicate', c.predicate)
                        order by f.slug)
       from public.claim c join public.entity f on f.id = c.entity_id
-      where c.object_id = e.id and c.status = 'published' and f.status = 'published'
+      where c.object_id = e.id and c.status = 'published' and f.status = 'published' and public.has_credit(c.id)
     ), '[]')
   )
   from public.entity e
@@ -463,10 +487,10 @@ language sql stable as $$
     from walk w
     cross join lateral (
       select c.object_id as id, c.predicate, 'out' as direction from public.claim c
-      where c.entity_id = w.id and c.object_id is not null and c.status = 'published'
+      where c.entity_id = w.id and c.object_id is not null and c.status = 'published' and public.has_credit(c.id)
       union all
       select c.entity_id, c.predicate, 'in' from public.claim c
-      where c.object_id = w.id and c.status = 'published'
+      where c.object_id = w.id and c.status = 'published' and public.has_credit(c.id)
     ) n
     where w.hops < least(greatest(p_hops, 1), 2)
       and not n.id = any (w.path)
