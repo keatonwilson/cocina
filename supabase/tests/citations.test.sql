@@ -1,0 +1,83 @@
+-- Citation rules and the publish gate. Run: supabase test db
+begin;
+select plan(13);
+
+-- Deferred constraint triggers fire at commit, which a test never reaches:
+-- run the statement, then flush the checks, then go back to deferred.
+create function pg_temp.committed(sql text) returns void language plpgsql as $$
+begin
+  execute sql;
+  set constraints all immediate;
+  set constraints all deferred;
+end $$;
+
+insert into source (url, title, publisher) values ('https://example.com/chavindeca', 'Chavindecas', 'Example Eats');
+insert into source (url, title) values ('https://anon.example/page', 'No credit at all');
+insert into creator (name, do_not_use) values ('Opted Out', true);
+insert into source (url, title, publisher) values ('https://optout.example/a', 'Opted out work', 'Optout Press');
+insert into source_creator values ((select id from source where url = 'https://optout.example/a'),
+                                   (select id from creator where name = 'Opted Out'));
+
+insert into entity (slug, kind, name) values ('chavindeca', 'dish', 'Chavindeca');
+insert into alias (entity_id, text, lang) values ((select id from entity where slug = 'chavindeca'), 'chavindeca', 'es');
+insert into proposal (author, rationale) values ('test', 'p1');
+
+select throws_like(
+  $$ insert into claim (entity_id, predicate, value) values ((select id from entity where slug = 'chavindeca'), 'flavor', 'x') $$,
+  '%is not allowed for entity%', 'a predicate outside the kind''s list is refused');
+
+insert into claim (entity_id, predicate, value, proposal_id)
+values ((select id from entity where slug = 'chavindeca'), 'originates_in', 'Chavinda, Michoacán',
+        (select id from proposal where rationale = 'p1'));
+
+select throws_like(
+  $$ select pg_temp.committed('update claim set status = ''published'' where value = ''Chavinda, Michoacán''') $$,
+  '%without credited evidence%', 'a claim cannot be published without evidence');
+
+select throws_ok(
+  $$ insert into evidence (claim_id, source_id, quote) values ((select id from claim limit 1), 1, repeat('x', 401)) $$,
+  '23514', null, 'a quote over 400 characters is refused');
+
+insert into evidence (claim_id, source_id, quote, proposal_id)
+values ((select id from claim where value = 'Chavinda, Michoacán'),
+        (select id from source where url = 'https://anon.example/page'),
+        'from Chavinda, Michoacán', (select id from proposal where rationale = 'p1'));
+
+select throws_like(
+  $$ select pg_temp.committed('select accept_proposal((select id from proposal where rationale = ''p1''), ''tester'')') $$,
+  '%without credited evidence%', 'evidence from a source with no author or publisher does not count as credit');
+
+update evidence set source_id = (select id from source where url = 'https://optout.example/a');
+select throws_like(
+  $$ select pg_temp.committed('select accept_proposal((select id from proposal where rationale = ''p1''), ''tester'')') $$,
+  '%without credited evidence%', 'evidence from a do_not_use creator does not count');
+
+update evidence set source_id = (select id from source where url = 'https://example.com/chavindeca');
+select lives_ok(
+  $$ select pg_temp.committed('select accept_proposal((select id from proposal where rationale = ''p1''), ''tester'')') $$,
+  'accepting a credited proposal commits');
+
+select is((select status::text from entity where slug = 'chavindeca'), 'published',
+  'the first accepted claim publishes its seeded entity');
+select is((select status::text from alias where text = 'chavindeca'), 'published',
+  'and the entity''s name hints');
+
+select is((select jsonb_array_length(card -> 'claims') from (select get_entity('chavindeca') as card) c), 1,
+  'the card carries the claim');
+select is((select get_entity('chavindeca') #>> '{claims,0,sources,0,publisher}'), 'Example Eats',
+  'with its credit');
+
+select is((select slug from search_entities('chavideca')), 'chavindeca', 'a typo still finds the entity');
+
+-- A proposed claim stays invisible to consumers
+insert into proposal (author, rationale) values ('test', 'p2');
+insert into claim (entity_id, predicate, value, proposal_id)
+values ((select id from entity where slug = 'chavindeca'), 'note', 'unreviewed', (select id from proposal where rationale = 'p2'));
+
+set local role anon;
+select is((select count(*) from claim where value = 'unreviewed'), 0::bigint, 'anon cannot see proposed claims');
+select is((select count(*) from source_text), 0::bigint, 'anon cannot read source text');
+reset role;
+
+select * from finish();
+rollback;
