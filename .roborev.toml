@@ -1,0 +1,22 @@
+# roborev reviews every commit (post-commit hook). Unset keys use the global
+# defaults; `roborev init` lists them all.
+agent = 'claude-code'
+
+# Machine-written; reviewing it only spends the prompt
+exclude_patterns = ['app/pnpm-lock.yaml']
+
+review_guidelines = """
+cocina is a curated knowledgebase: every published fact must trace to a credited source.
+- The citation rules are the core invariant. Nothing reaches published rows except through
+  accept_proposal, and the deferred constraint triggers must not be weakened or bypassed.
+  Flag any read path (SQL function, MCP tool, REST, snapshot) that could expose proposed,
+  rejected or retired rows, source_text, proposal or run_log.
+- The repo is public: flag secrets, keys, personal data or local paths in code, config or docs.
+- The pipeline fetches untrusted web pages and hands them to a model: flag any path where page
+  content could become published data without the quote check and human review, and any fetch
+  that ignores robots.txt or a noai opt-out.
+- Simplicity is a goal. Prefer the standard library and platform features; don't ask for
+  abstractions, config or layers the code doesn't need yet. Deliberate shortcuts carry a
+  `ponytail:` comment naming their ceiling; don't flag those unless the ceiling is already hit.
+- Prioritise correctness bugs, data-loss risks and security issues over style.
+"""
