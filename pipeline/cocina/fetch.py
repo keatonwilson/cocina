@@ -71,14 +71,26 @@ def html_to_text(html: str) -> tuple[str, str, bool]:
     return " ".join(p.title.split()), "\n".join(line for line in lines if line), p.noai
 
 
-def _get(url: str) -> tuple[int, dict, bytes]:
-    """(status, headers, body). Raises one of FETCH_ERRORS when there's no response."""
+class _Polite(urllib.request.HTTPRedirectHandler):
+    """Follow a page's redirect only where that host's robots.txt allows us."""
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        if not allowed(newurl):
+            raise Skipped(f"redirect to {newurl} is disallowed by robots.txt")
+        return super().redirect_request(req, fp, code, msg, headers, newurl)
+
+
+_pages = urllib.request.build_opener(_Polite)
+
+
+def _get(url: str, opener=urllib.request.urlopen) -> tuple[int, dict, bytes, str]:
+    """(status, headers, body, final url). Raises one of FETCH_ERRORS when there's no response."""
     req = urllib.request.Request(url, headers={"User-Agent": UA, "Accept": "text/html,text/plain"})
     try:
-        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
-            return resp.status, resp.headers, resp.read(MAX_BYTES)
+        with opener(req, timeout=TIMEOUT) as resp:
+            return resp.status, resp.headers, resp.read(MAX_BYTES), resp.url
     except urllib.error.HTTPError as e:
-        return e.code, e.headers, b""
+        return e.code, e.headers, b"", url
 
 
 _robots: dict[str, urllib.robotparser.RobotFileParser] = {}
@@ -95,9 +107,9 @@ def allowed(url: str) -> bool:
     if root not in _robots:
         rp = urllib.robotparser.RobotFileParser()
         try:
-            status, _, body = _get(root + "/robots.txt")
+            status, _, body, _ = _get(root + "/robots.txt")
         except FETCH_ERRORS:
-            status, body = 503, b""
+            return False  # unreachable: disallow, but ask again next time rather than for the whole batch
         if status in (401, 403) or status >= 500:
             rp.disallow_all = True
         elif status >= 400:
@@ -113,7 +125,7 @@ def fetch_page(url: str) -> dict:
     if not allowed(url):
         raise Skipped("disallowed by robots.txt")
     try:
-        status, headers, body = _get(url)
+        status, headers, body, url = _get(url, _pages.open)   # url: where redirects ended
     except FETCH_ERRORS as e:
         raise Skipped(f"unreachable: {e!r}") from e
     if status >= 400:

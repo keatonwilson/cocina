@@ -157,6 +157,10 @@ def save_source(page: dict, meta) -> int | None:
     creators = [db().rpc("creator_id", {"p_name": name}).execute().data for name in meta.authors]
     if creators and db().table("creator").select("id").in_("id", creators).eq("do_not_use", True).execute().data:
         return None
+    # ...or among the creators an earlier run linked to this URL, which this run may not have named
+    stored = db().table("source").select("source_creator(creator(do_not_use))").eq("url", page["url"]).execute().data
+    if any(sc["creator"]["do_not_use"] for s in stored for sc in s["source_creator"]):
+        return None
     published_on = meta.published_on if meta.published_on and len(meta.published_on) == 10 else None
     row = db().table("source").upsert({
         "url": page["url"],

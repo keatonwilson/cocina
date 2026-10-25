@@ -1,5 +1,6 @@
 """The pipeline logic that needs no network or DB: quote check, grouping, page text, robots and noai."""
 
+import urllib.request
 from email.message import Message
 
 import pytest
@@ -48,14 +49,14 @@ def test_page_text_skips_chrome_and_sees_noai():
 
 def test_robots_txt_follows_rfc_9309(monkeypatch):
     replies = {
-        "https://gone.example": (404, Message(), b""),               # missing: allowed
-        "https://down.example": (503, Message(), b""),               # server error: disallowed
-        "https://private.example": (403, Message(), b""),            # forbidden: disallowed
+        "https://gone.example": (404, Message(), b"", ""),           # missing: allowed
+        "https://down.example": (503, Message(), b"", ""),           # server error: disallowed
+        "https://private.example": (403, Message(), b"", ""),        # forbidden: disallowed
         "https://unreachable.example": ConnectionResetError(),       # no answer: disallowed
-        "https://rules.example": (200, Message(), b"User-agent: *\nDisallow: /private\n"),
+        "https://rules.example": (200, Message(), b"User-agent: *\nDisallow: /private\n", ""),
     }
 
-    def fake_get(url):
+    def fake_get(url, opener=None):
         reply = replies[url.removesuffix("/robots.txt")]
         if isinstance(reply, Exception):
             raise reply
@@ -67,6 +68,7 @@ def test_robots_txt_follows_rfc_9309(monkeypatch):
     assert not fetch.allowed("https://down.example/a")
     assert not fetch.allowed("https://private.example/a")
     assert not fetch.allowed("https://unreachable.example/a")
+    assert "https://unreachable.example" not in fetch._robots  # asked again next time
     assert fetch.allowed("https://rules.example/a")
     assert not fetch.allowed("https://rules.example/private/a")
 
@@ -76,6 +78,14 @@ def test_noai_header_skips_the_page(monkeypatch):
     headers["Content-Type"] = "text/html"
     headers["X-Robots-Tag"] = "noai"
     monkeypatch.setattr(fetch, "allowed", lambda url: True)
-    monkeypatch.setattr(fetch, "_get", lambda url: (200, headers, b"<p>" + b"words " * 100 + b"</p>"))
+    monkeypatch.setattr(fetch, "_get", lambda url, opener=None: (200, headers, b"<p>" + b"words " * 100 + b"</p>", url))
     with pytest.raises(fetch.Skipped, match="noai"):
         fetch.fetch_page("https://example.com/page")
+
+
+def test_a_redirect_is_followed_only_where_robots_allows(monkeypatch):
+    monkeypatch.setattr(fetch, "allowed", lambda url: "blocked" not in url)
+    req = urllib.request.Request("https://ok.example/a")
+    with pytest.raises(fetch.Skipped, match="redirect"):
+        fetch._Polite().redirect_request(req, None, 302, "Found", Message(), "https://blocked.example/b")
+    assert fetch._Polite().redirect_request(req, None, 302, "Found", Message(), "https://ok.example/b")
