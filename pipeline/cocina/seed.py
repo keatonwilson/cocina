@@ -1,14 +1,17 @@
 """Seed proposed entities from cartoTaco's spec tables and Salsa Atlas.
 
     python -m cocina.seed
+    python -m cocina.seed --add dish Gringa --add salsa "Salsa macha"
 
 Reads cartoTaco with its anon key (public-read tables, so read-only by
 construction). Each spec becomes a proposed entity with its name as an alias
 and the old description kept in `note`, a hint for research, never evidence.
 Entities stay proposed until research finds a sourced claim and a human
-accepts it. Safe to re-run: existing slugs are skipped.
+accepts it. Safe to re-run: existing slugs are skipped. --add proposes a concept
+no cartoTaco spec describes.
 """
 
+import argparse
 import re
 
 from postgrest.exceptions import APIError
@@ -34,7 +37,7 @@ def _note(table: str, row: dict, *fields: str) -> str:
     return f"Imported from cartoTaco {table} #{row.get('id') or row.get('slug')}. " + " | ".join(parts)
 
 
-def seed() -> None:
+def seed(extra: list[tuple[str, str]] = ()) -> None:
     ct = create_client(env("CARTOTACO_SUPABASE_URL"), env("CARTOTACO_ANON_KEY"))
     try:
         styles = ct.table("salsa_styles").select("*").eq("status", "published").execute().data
@@ -57,6 +60,8 @@ def seed() -> None:
                          _note(table, r, "origin", "short_descrip", "long_descrip"), []))
     for name, aliases in MENU_CATEGORIES:
         rows.append((slugify(name), "menu_category", name, "Menu category tracked by cartoTaco.", aliases))
+    for kind, name in extra:
+        rows.append((slugify(name), kind, name, "Added by hand: no cartoTaco spec describes it.", []))
 
     have = {e["slug"]: e["kind"] for e in db().table("entity").select("slug, kind").execute().data}
     added = 0
@@ -74,4 +79,6 @@ def seed() -> None:
 
 
 if __name__ == "__main__":
-    seed()
+    ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
+    ap.add_argument("--add", nargs=2, action="append", default=[], metavar=("KIND", "NAME"))
+    seed(ap.parse_args().add)
