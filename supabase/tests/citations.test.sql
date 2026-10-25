@@ -1,6 +1,6 @@
 -- Citation rules and the publish gate. Run: supabase test db
 begin;
-select plan(25);
+select plan(26);
 
 -- Deferred constraint triggers fire at commit, which a test never reaches:
 -- run the statement, then flush the checks, then go back to deferred.
@@ -128,6 +128,9 @@ select lives_ok(
   'a claim that lost its credit can still take new evidence');
 select pg_temp.committed('select accept_proposal((select id from proposal where rationale = ''p7''), ''tester'')');
 select is(get_entity('molote') #>> '{claims,0,sources,0,publisher}', 'Example Eats', 'and a new credited source brings it back');
+set local role anon;
+select is((select count(*) from alias where text = 'molote'), 1::bigint, 'names and all, over raw REST too');
+reset role;
 
 -- A rejected name doesn't block the same name proposed again
 insert into proposal (author, rationale) values ('test', 'p5');
