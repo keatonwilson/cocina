@@ -139,8 +139,10 @@ def auto_review(entity: str | None = None) -> None:
     for proposals in by_entity.values():
         try:
             _auto_entity(ai, about(proposals[0]), proposals)
-        except Exception as e:  # one entity's failure accepts nothing for it and doesn't stop the rest
-            print(f"{about(proposals[0])['slug']}: auto-review failed: {e!r}; nothing accepted")
+        except Exception as e:  # one entity's failure doesn't stop the rest
+            # ponytail: a DB error after the model call loses that call's cost from run_log
+            print(f"{about(proposals[0])['slug']}: auto-review failed: {e!r}; "
+                  "anything accepted before the error stays published, the rest stays open")
             db().table("run_log").insert({"agent": "auto-review", "errors": [{"error": repr(e)}]}).execute()
 
 
