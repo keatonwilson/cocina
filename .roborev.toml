@@ -9,6 +9,9 @@ review_guidelines = """
 cocina is a curated knowledgebase: every published fact must trace to a credited source.
 - The citation rules are the core invariant. Nothing reaches published rows except through
   accept_proposal, and the deferred constraint triggers must not be weakened or bypassed.
+  accept_proposal is called by a human (review.py) or by auto-review (review.py --auto) for
+  proposals Claude didn't flag; a flagged proposal, or one restating a rejected fact, must never
+  be auto-accepted.
   Flag any read path (SQL function, MCP tool, REST, snapshot) that could expose proposed,
   rejected or retired rows, source_text, proposal or run_log.
 - The repo is public: flag secrets, keys, personal data or local paths in code, config or docs.

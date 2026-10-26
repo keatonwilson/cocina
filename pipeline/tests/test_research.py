@@ -1,4 +1,4 @@
-"""The pipeline logic that needs no network or DB: quote check, grouping, page text, robots and noai."""
+"""The pipeline logic that needs no network or DB: quote check, grouping, page text, robots, noai, auto-review."""
 
 import urllib.request
 from email.message import Message
@@ -89,3 +89,16 @@ def test_a_redirect_is_followed_only_where_robots_allows(monkeypatch):
     with pytest.raises(fetch.Skipped, match="redirect"):
         fetch._Polite().redirect_request(req, None, 302, "Found", Message(), "https://blocked.example/b")
     assert fetch._Polite().redirect_request(req, None, 302, "Found", Message(), "https://ok.example/b")
+
+
+def test_auto_review_accepts_only_what_it_was_asked_about_and_did_not_flag():
+    from types import SimpleNamespace as Flag
+
+    from cocina.review import split
+    proposals = [{"id": 1}, {"id": 2}, {"id": 3, "flag": "conflict: an earlier run"}]
+    flags = [Flag(proposal=2, kind="conflict", why="corn vs flour (P9)"),
+             Flag(proposal=3, kind="unsupported", why="re-flagged"),
+             Flag(proposal=99, kind="unsupported", why="an id we never sent")]
+    accept, new = split(proposals, flags)
+    assert accept == [1]                                  # 3 still waits for a human
+    assert new == {2: "conflict: corn vs flour (P9)"}     # 3 keeps its first flag, 99 is ignored

@@ -119,7 +119,7 @@ RLS: anon reads published rows, plus `source` and `creator`. `proposal`, `run_lo
 - **Phase 3, Long form and autonomy.**
   - `article` / `passage` tables (per-sentence citations with locators), briefs, agent drafts edited by a human, pgvector passage retrieval.
   - Gap filler fed by concierge misses (`found: false` + 👎), then the auditor (`content_hash` re-fetch) and the linker.
-  - Auto-accept policy once acceptance rates exist.
+  - ~~Auto-accept policy once acceptance rates exist.~~ Moved into phase 1 (2026-10-25, the owner's call after reviewing the first entity by hand): `review --auto` publishes proposals Claude finds supported and uncontested; conflicts, unsupported quotes and anything restating a rejected fact wait for a human. Prose (writeups, articles) stays human-reviewed.
   - Still open, from a comment on the design doc: may agents find article sources themselves, or only use the ones the owner picks?
   - Done when 5 articles are published and a miss becomes an entity in under a week.
 - **Phase 4, Reach.** Hybrid FTS + embedding search, a cartoTaco glossary built from a snapshot, other consumers and domains.

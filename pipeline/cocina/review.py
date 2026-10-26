@@ -1,22 +1,33 @@
-"""Review open proposals in the terminal: the one gate to published data.
+"""Review open proposals: auto-review publishes the uncontested ones, a human the rest.
 
+    python -m cocina.review --auto [--entity chavindeca]     # after research
     python -m cocina.review [--entity chavindeca] [--kind dish]
 
-a accept · r reject (asks why) · s skip · o open the sources · q quit
+--auto: Claude checks each entity's open proposals against its published facts and
+each other. A proposal whose quotes don't state it, or that can't be true alongside
+another fact, is flagged for a human; the rest go through accept_proposal, so the
+citation rules still decide. Prose and articles (phase 2+) stay human-only.
+
+In the terminal: a accept · r reject (asks why) · s skip · o open the sources · q quit
 """
 
 import argparse
 import getpass
 import os
 import webbrowser
+from typing import Literal
+
+import anthropic
+from pydantic import BaseModel
 
 from cocina.db import client as db
+from cocina.research import FALLBACK, MODEL, _cost
 
 SELECT = (
-    "id, author, rationale, created_at, "
-    "claim(id, predicate, value, status, entity:entity!claim_entity_id_fkey(slug, name, kind), "
+    "id, author, rationale, flag, created_at, "
+    "claim(id, predicate, value, status, entity:entity!claim_entity_id_fkey(id, slug, name, kind), "
     "object:entity!claim_object_id_fkey(name)), "
-    "evidence(quote, locator, claim:claim(predicate, value, entity:entity!claim_entity_id_fkey(slug, name, kind)), "
+    "evidence(quote, locator, claim:claim(id, predicate, value, entity:entity!claim_entity_id_fkey(id, slug, name, kind)), "
     "source(title, url, publisher, published_on, source_creator(creator(name))))"
 )
 
@@ -38,6 +49,8 @@ def show(p: dict, n: int, total: int) -> list[str]:
     kind = "new claim" if claim else "more evidence for a published claim"
     print(f"\n[{n}/{total}] {e['name']} ({e['kind']}) · {target['predicate']} = \"{target['value']}\"{link}")
     print(f"  {kind} · {p['author']} · {p['rationale'] or ''}")
+    if p.get("flag"):
+        print(f"  ⚠ {p['flag']}")
     for i, ev in enumerate(p["evidence"], 1):
         print(f"  {i}. \"{ev['quote']}\"" + (f" ({ev['locator']})" if ev.get("locator") else ""))
         print(f"     — {credit(ev['source'])}")
@@ -45,16 +58,118 @@ def show(p: dict, n: int, total: int) -> list[str]:
     return [ev["source"]["url"] for ev in p["evidence"] if ev["source"].get("url")]
 
 
+def _target(p: dict) -> dict | None:
+    """The claim a proposal is about: its new claim, or the published one it adds evidence to."""
+    return (p["claim"] or [None])[0] or (p["evidence"][0]["claim"] if p["evidence"] else None)
+
+
+def about(p: dict) -> dict:
+    t = _target(p)
+    return t["entity"] if t else {}
+
+
+def open_proposals(entity: str | None = None, kind: str | None = None) -> list[dict]:
+    rows = db().table("proposal").select(SELECT).eq("status", "open").order("id").execute().data
+    return [p for p in rows if (not entity or about(p).get("slug") == entity)
+            and (not kind or about(p).get("kind") == kind)]
+
+
+AUTO_SYSTEM = """You check proposed facts about a Mexican food before they publish without a human \
+reading them. Each proposal (#id) states one fact and quotes the pages that support it; published \
+facts (P id) are already in the knowledgebase; a human rejected the facts marked R id, for the \
+reason given.
+
+Flag a proposal only when:
+- unsupported: none of its quotes states the fact. The quote is real, but says something else, \
+only hints at it, or is about a different food.
+- conflict: it can't be true alongside another fact listed, published or proposed: "uses corn \
+tortilla" against "uses flour tortilla", or two different places of origin. Facts that can all be \
+true at once (several ingredients, regional variants, a second name) are not conflicts. Flag every \
+proposal on each side of a conflict. A proposal that restates a rejected fact conflicts with it.
+
+Flag nothing else; everything you don't flag is published. `why` is one sentence naming the other \
+facts (#id, P id or R id) involved."""
+
+
+class Flag(BaseModel):
+    proposal: int
+    kind: Literal["unsupported", "conflict"]
+    why: str
+
+
+class Verdict(BaseModel):
+    flags: list[Flag]
+
+
+def split(proposals: list[dict], flags: list) -> tuple[list[int], dict[int, str]]:
+    """(proposals to accept, {proposal: flag}). Already-flagged ones wait for a human either way;
+    a flag naming an id we didn't ask about is ignored."""
+    waiting = {p["id"] for p in proposals if p.get("flag")}
+    new = {f.proposal: f"{f.kind}: {f.why}" for f in flags
+           if f.proposal in {p["id"] for p in proposals} - waiting}
+    return [p["id"] for p in proposals if p["id"] not in waiting and p["id"] not in new], new
+
+
+def _facts(ent: dict, decided: list[dict], proposals: list[dict]) -> str:
+    lines = [f"Food: {ent['name']} ({ent['kind']})", "", "Published and rejected facts:"]
+    lines += [f"P{c['id']} {c['predicate']} = \"{c['value']}\"" if c["status"] == "published" else
+              f"R{c['id']} {c['predicate']} = \"{c['value']}\" (rejected: {(c['proposal'] or {}).get('reason')})"
+              for c in decided] or ["(none)"]
+    lines += ["", "Proposed facts:"]
+    for p in proposals:
+        t = _target(p)
+        more = "" if p["claim"] else f" (another source for P{t['id']})"
+        lines.append(f"#{p['id']}{more} {t['predicate']} = \"{t['value']}\"")
+        lines += [f"   quote: \"{ev['quote']}\"" for ev in p["evidence"]]
+    return "\n".join(lines)
+
+
+def auto_review(entity: str | None = None) -> None:
+    ai = anthropic.Anthropic(timeout=600, max_retries=1)
+    by_entity: dict[int, list[dict]] = {}
+    for p in open_proposals(entity):
+        if _target(p):
+            by_entity.setdefault(about(p)["id"], []).append(p)
+    for proposals in by_entity.values():
+        ent = about(proposals[0])
+        decided = (db().table("claim").select("id, predicate, value, status, proposal(reason)")
+                   .eq("entity_id", ent["id"]).in_("status", ["published", "rejected"]).execute().data)
+        with ai.beta.messages.stream(
+            model=MODEL,
+            max_tokens=8000,
+            output_config={"effort": "medium"},
+            system=AUTO_SYSTEM,
+            messages=[{"role": "user", "content": _facts(ent, decided, proposals)}],
+            output_format=Verdict,
+            **FALLBACK,
+        ) as stream:
+            resp = stream.get_final_message()
+        if resp.stop_reason == "refusal" or resp.parsed_output is None:
+            print(f"{ent['slug']}: auto-review failed (stop_reason={resp.stop_reason}); nothing accepted")
+            continue
+        accept, flags = split(proposals, resp.parsed_output.flags)
+        for pid, why in flags.items():
+            db().table("proposal").update({"flag": why}).eq("id", pid).execute()
+        refused = []
+        for pid in accept:
+            try:
+                db().rpc("accept_proposal", {"p_id": pid, "p_reviewer": "auto-review"}).execute()
+            except Exception as e:  # a citation rule refused it: it stays open for the next run
+                refused.append(f"#{pid}: {getattr(e, 'message', e)}")
+        db().table("run_log").insert({"agent": "auto-review", "cost_usd": round(_cost(resp.usage), 4),
+                                      "proposals": len(accept) - len(refused),
+                                      "errors": [{"refused": r} for r in refused]}).execute()
+        print(f"{ent['slug']}: {len(accept) - len(refused)} accepted, {len(flags)} flagged for you, "
+              f"{len(refused)} refused · ${_cost(resp.usage):.3f}")
+        for pid, why in flags.items():
+            print(f"  #{pid} {why}")
+        for r in refused:
+            print(f"  refused {r}")
+
+
 def review(entity: str | None, kind: str | None) -> None:
     who = os.getenv("COCINA_REVIEWER") or getpass.getuser()
-    rows = db().table("proposal").select(SELECT).eq("status", "open").order("id").execute().data
-
-    def about(p):
-        c = (p["claim"] or [None])[0] or (p["evidence"][0]["claim"] if p["evidence"] else None)
-        return c["entity"] if c else {}
-
-    rows = [p for p in rows if (not entity or about(p).get("slug") == entity)
-            and (not kind or about(p).get("kind") == kind)]
+    rows = open_proposals(entity, kind)
     done = {"accepted": 0, "rejected": 0, "skipped": 0}
     for n, p in enumerate(rows, 1):
         urls = show(p, n, len(rows))
@@ -89,5 +204,6 @@ if __name__ == "__main__":
     ap = argparse.ArgumentParser(description=__doc__, formatter_class=argparse.RawDescriptionHelpFormatter)
     ap.add_argument("--entity")
     ap.add_argument("--kind")
+    ap.add_argument("--auto", action="store_true", help="publish uncontested proposals, flag the rest")
     a = ap.parse_args()
-    review(a.entity, a.kind)
+    auto_review(a.entity) if a.auto else review(a.entity, a.kind)

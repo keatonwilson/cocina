@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-cocina is a curated knowledgebase of Mexican food concepts (dishes, salsas, chiles, techniques). Every fact is a small **claim** backed by **evidence**: a short quote from a credited **source**. Scripts and agents only *propose*; a human publishes. Consumers (cartoTaco's concierge first) read published data only. Design doc: "Culinary Knowledgebase: Design" (claude.ai/artifact/JKErHUCn6rYC4jYppQbJtv); phase plan in `docs/PLAN.md`.
+cocina is a curated knowledgebase of Mexican food concepts (dishes, salsas, chiles, techniques). Every fact is a small **claim** backed by **evidence**: a short quote from a credited **source**. Scripts and agents only *propose*. Auto-review publishes uncontested claims; a human decides the flagged ones (a conflict, or a quote that doesn't state the claim), and from phase 2 all prose. Consumers (cartoTaco's concierge first) read published data only. Design doc: "Culinary Knowledgebase: Design" (claude.ai/artifact/JKErHUCn6rYC4jYppQbJtv); phase plan in `docs/PLAN.md`.
 
 ## Layout
 
@@ -18,7 +18,8 @@ cocina is a curated knowledgebase of Mexican food concepts (dishes, salsas, chil
 - `cd app && pnpm check` – type check; `pnpm dev` serves `/mcp`
 - `python -m cocina.seed` – proposed entities from cartoTaco's spec tables and Salsa Atlas (read-only, anon key; re-runnable)
 - `python -m cocina.research <slug>...` – search → fetch → extract → quote check → proposals (~$0.15–0.25 and ~30 s per entity)
-- `python -m cocina.review [--entity slug] [--kind dish]` – accept/reject in the terminal
+- `python -m cocina.review --auto [--entity slug]` – after research: Claude flags conflicting or unsupported proposals (`proposal.flag`), `accept_proposal` publishes the rest as `auto-review` (~$0.02 per entity)
+- `python -m cocina.review [--entity slug] [--kind dish]` – a human decides what's still open, flag shown
 - `python -m cocina.snapshot [--release]` – `snapshots/kb-YYYY.MM.DD.jsonl`, optionally a GitHub release
 
 ## Data model (and why)
@@ -53,5 +54,5 @@ Deferred constraint triggers check at commit, so a whole proposal is judged at o
 
 ## Conventions
 
-- New migration: `supabase migration new <NNN_name>`; CI applies migrations on merge to `main` (`migrate.yml`). Never paste SQL into the Supabase editor.
+- New migration: `supabase migration new <NNN_name> < /dev/null` (it reads SQL from stdin, so a non-interactive shell hangs without the redirect); CI applies migrations on merge to `main` (`migrate.yml`). Never paste SQL into the Supabase editor.
 - Mark deliberate shortcuts with a `ponytail:` comment naming the ceiling and the upgrade path.
