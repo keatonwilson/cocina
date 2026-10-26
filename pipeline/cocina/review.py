@@ -20,7 +20,7 @@ from typing import Literal
 import anthropic
 from pydantic import BaseModel
 
-from cocina.db import client as db
+from cocina.db import client as db, norm
 from cocina.research import FALLBACK, MODEL, _cost
 
 SELECT = (
@@ -101,13 +101,19 @@ class Verdict(BaseModel):
     flags: list[Flag]
 
 
-def split(proposals: list[dict], flags: list) -> tuple[list[int], dict[int, str]]:
-    """(proposals to accept, {proposal: flag}). Already-flagged ones wait for a human either way;
-    a flag naming an id we didn't ask about is ignored."""
-    waiting = {p["id"] for p in proposals if p.get("flag")}
-    new = {f.proposal: f"{f.kind}: {f.why}" for f in flags
-           if f.proposal in {p["id"] for p in proposals} - waiting}
-    return [p["id"] for p in proposals if p["id"] not in waiting and p["id"] not in new], new
+def split(proposals: list[dict], flags: list,
+          rejected: dict[tuple[str, str], str]) -> tuple[list[int], dict[int, str]]:
+    """(proposals to accept, {proposal: flag}). A new claim restating a rejected fact
+    (rejected: (predicate, norm(value)) → flag) is flagged whatever the model says; an
+    already-flagged proposal waits for a human either way; a flag naming an id we didn't
+    send is ignored."""
+    asked = {p["id"] for p in proposals if not p.get("flag")}
+    new = {f.proposal: f"{f.kind}: {f.why}" for f in flags if f.proposal in asked}
+    for p in proposals:
+        c = (p.get("claim") or [None])[0]
+        if p["id"] in asked and c and (c["predicate"], norm(c["value"])) in rejected:
+            new[p["id"]] = rejected[(c["predicate"], norm(c["value"]))]
+    return [p["id"] for p in proposals if p["id"] in asked and p["id"] not in new], new
 
 
 def _facts(ent: dict, decided: list[dict], proposals: list[dict]) -> str:
@@ -131,40 +137,53 @@ def auto_review(entity: str | None = None) -> None:
         if _target(p):
             by_entity.setdefault(about(p)["id"], []).append(p)
     for proposals in by_entity.values():
-        ent = about(proposals[0])
-        decided = (db().table("claim").select("id, predicate, value, status, proposal(reason)")
-                   .eq("entity_id", ent["id"]).in_("status", ["published", "rejected"]).execute().data)
-        with ai.beta.messages.stream(
-            model=MODEL,
-            max_tokens=8000,
-            output_config={"effort": "medium"},
-            system=AUTO_SYSTEM,
-            messages=[{"role": "user", "content": _facts(ent, decided, proposals)}],
-            output_format=Verdict,
-            **FALLBACK,
-        ) as stream:
-            resp = stream.get_final_message()
-        if resp.stop_reason == "refusal" or resp.parsed_output is None:
-            print(f"{ent['slug']}: auto-review failed (stop_reason={resp.stop_reason}); nothing accepted")
-            continue
-        accept, flags = split(proposals, resp.parsed_output.flags)
-        for pid, why in flags.items():
-            db().table("proposal").update({"flag": why}).eq("id", pid).execute()
-        refused = []
-        for pid in accept:
-            try:
-                db().rpc("accept_proposal", {"p_id": pid, "p_reviewer": "auto-review"}).execute()
-            except Exception as e:  # a citation rule refused it: it stays open for the next run
-                refused.append(f"#{pid}: {getattr(e, 'message', e)}")
-        db().table("run_log").insert({"agent": "auto-review", "cost_usd": round(_cost(resp.usage), 4),
-                                      "proposals": len(accept) - len(refused),
-                                      "errors": [{"refused": r} for r in refused]}).execute()
-        print(f"{ent['slug']}: {len(accept) - len(refused)} accepted, {len(flags)} flagged for you, "
-              f"{len(refused)} refused · ${_cost(resp.usage):.3f}")
-        for pid, why in flags.items():
-            print(f"  #{pid} {why}")
-        for r in refused:
-            print(f"  refused {r}")
+        try:
+            _auto_entity(ai, about(proposals[0]), proposals)
+        except Exception as e:  # one entity's failure accepts nothing for it and doesn't stop the rest
+            print(f"{about(proposals[0])['slug']}: auto-review failed: {e!r}; nothing accepted")
+            db().table("run_log").insert({"agent": "auto-review", "errors": [{"error": repr(e)}]}).execute()
+
+
+def _auto_entity(ai: anthropic.Anthropic, ent: dict, proposals: list[dict]) -> None:
+    decided = (db().table("claim").select("id, predicate, value, status, proposal(reason)")
+               .eq("entity_id", ent["id"]).in_("status", ["published", "rejected"]).execute().data)
+    rejected = {(c["predicate"], norm(c["value"])):
+                f"conflict: restates R{c['id']}, rejected: {(c['proposal'] or {}).get('reason')}"
+                for c in decided if c["status"] == "rejected"}
+    with ai.beta.messages.stream(
+        model=MODEL,
+        max_tokens=8000,
+        output_config={"effort": "medium"},
+        system=AUTO_SYSTEM,
+        messages=[{"role": "user", "content": _facts(ent, decided, proposals)}],
+        output_format=Verdict,
+        **FALLBACK,
+    ) as stream:
+        resp = stream.get_final_message()
+    cost = round(_cost(resp.usage), 4)
+    if resp.stop_reason == "refusal" or resp.parsed_output is None:
+        print(f"{ent['slug']}: auto-review failed (stop_reason={resp.stop_reason}); nothing accepted")
+        db().table("run_log").insert({"agent": "auto-review", "cost_usd": cost,
+                                      "errors": [{"error": f"stop_reason={resp.stop_reason}"}]}).execute()
+        return
+    accept, flags = split(proposals, resp.parsed_output.flags, rejected)
+    for pid, why in flags.items():
+        db().table("proposal").update({"flag": why}).eq("id", pid).execute()
+    refused = []
+    for pid in accept:
+        try:
+            db().rpc("accept_proposal", {"p_id": pid, "p_reviewer": "auto-review"}).execute()
+        except Exception as e:  # a citation rule refused it: it stays open for the next run
+            refused.append(f"#{pid}: {getattr(e, 'message', e)}")
+    db().table("run_log").insert({"agent": "auto-review", "cost_usd": cost,
+                                  "proposals": len(accept) - len(refused),
+                                  "errors": [{"refused": r} for r in refused]}).execute()
+    print(f"{ent['slug']}: {len(accept) - len(refused)} accepted, {len(flags)} flagged for you, "
+          f"{len(refused)} refused · ${cost:.3f}")
+    for pid, why in flags.items():
+        print(f"  #{pid} {why}")
+    for r in refused:
+        print(f"  refused {r}")
 
 
 def review(entity: str | None, kind: str | None) -> None:

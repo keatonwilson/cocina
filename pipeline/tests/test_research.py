@@ -95,10 +95,14 @@ def test_auto_review_accepts_only_what_it_was_asked_about_and_did_not_flag():
     from types import SimpleNamespace as Flag
 
     from cocina.review import split
-    proposals = [{"id": 1}, {"id": 2}, {"id": 3, "flag": "conflict: an earlier run"}]
+    claim = lambda value: [{"predicate": "uses", "value": value}]  # noqa: E731
+    proposals = [{"id": 1, "claim": claim("cheese")}, {"id": 2, "claim": claim("ham")},
+                 {"id": 3, "claim": claim("salsa"), "flag": "conflict: an earlier run"},
+                 {"id": 4, "claim": claim("Tortilla de Maíz")}, {"id": 5, "claim": [], "evidence": []}]
     flags = [Flag(proposal=2, kind="conflict", why="corn vs flour (P9)"),
              Flag(proposal=3, kind="unsupported", why="re-flagged"),
              Flag(proposal=99, kind="unsupported", why="an id we never sent")]
-    accept, new = split(proposals, flags)
-    assert accept == [1]                                  # 3 still waits for a human
-    assert new == {2: "conflict: corn vs flour (P9)"}     # 3 keeps its first flag, 99 is ignored
+    rejected = {("uses", "tortilla de maiz"): "conflict: restates R7"}   # the model missed this one
+    accept, new = split(proposals, flags, rejected)
+    assert accept == [1, 5]                               # 3 still waits for a human
+    assert new == {2: "conflict: corn vs flour (P9)", 4: "conflict: restates R7"}  # 99 ignored
