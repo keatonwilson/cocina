@@ -15,11 +15,22 @@ from pathlib import Path
 from cocina.db import client as db
 
 
+def _free_tag(base: str) -> str:
+    """kb-YYYY.MM.DD, or .2, .3… when that day already has a release."""
+    tag, n = base, 1
+    while subprocess.run(["gh", "release", "view", tag], capture_output=True).returncode == 0:
+        n += 1
+        tag = f"{base}.{n}"
+    return tag
+
+
 def snapshot(release: bool) -> Path:
     # ponytail: PostgREST caps a response at max_rows (1000); page through cards() past that
     cards = db().rpc("cards").execute().data
     version = db().rpc("kb_version").execute().data
     tag = f"kb-{date.today():%Y.%m.%d}"
+    if release:
+        tag = _free_tag(tag)
     path = Path(__file__).resolve().parents[2] / "snapshots" / f"{tag}.jsonl"
     path.parent.mkdir(exist_ok=True)
     path.write_text("".join(json.dumps(c, ensure_ascii=False, sort_keys=True) + "\n" for c in cards))
