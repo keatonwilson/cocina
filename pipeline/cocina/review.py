@@ -84,8 +84,9 @@ Flag a proposal only when:
 only hints at it, or is about a different food.
 - conflict: it can't be true alongside another fact listed, published or proposed: "uses corn \
 tortilla" against "uses flour tortilla", or two different places of origin. Facts that can all be \
-true at once (several ingredients, regional variants, a second name) are not conflicts. Flag every \
-proposal on each side of a conflict. A proposal that restates a rejected fact conflicts with it.
+true at once (several ingredients, regional variants, a second name, a place inside another place \
+such as Mexico City and Mexico) are not conflicts. Flag every proposal on each side of a conflict. A \
+proposal that restates a rejected fact conflicts with it.
 
 Flag nothing else; everything you don't flag is published. `why` is one sentence naming the other \
 facts (#id, P id or R id) involved."""
