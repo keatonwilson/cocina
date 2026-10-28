@@ -120,3 +120,18 @@ def test_a_writeup_must_cite_its_card_and_not_copy_its_quotes():
     assert problems(copied, card) == ["sentence 1 copies 8+ words of a source quote"]
     stray = [{"text": "It is from Michoacán.", "claims": [1, 9]}, {"text": "Delicious.", "claims": []}]
     assert problems(stray, card) == ["sentence 1 cites claims the card doesn't carry: [9]", "sentence 2 cites nothing"]
+
+
+def test_all_rows_pages_past_the_row_cap():
+    from cocina.db import all_rows
+    data = list(range(2500))
+
+    class Query:  # stands in for a PostgREST request capped at 1000 rows
+        def range(self, start, end):
+            self.rows = data[start:end + 1][:1000]
+            return self
+
+        def execute(self):
+            return type("Response", (), {"data": self.rows})()
+
+    assert all_rows(Query) == data

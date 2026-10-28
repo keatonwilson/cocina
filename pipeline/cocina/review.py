@@ -21,7 +21,7 @@ from typing import Literal
 import anthropic
 from pydantic import BaseModel
 
-from cocina.db import client as db, norm
+from cocina.db import all_rows, client as db, norm
 from cocina.research import FALLBACK, MODEL, _cost
 
 SELECT = (
@@ -98,7 +98,7 @@ def about(p: dict) -> dict:
 
 
 def open_proposals(entity: str | None = None, kind: str | None = None) -> list[dict]:
-    rows = db().table("proposal").select(SELECT).eq("status", "open").order("id").execute().data
+    rows = all_rows(lambda: db().table("proposal").select(SELECT).eq("status", "open").order("id"))
     return [p for p in rows if (not entity or about(p).get("slug") == entity)
             and (not kind or about(p).get("kind") == kind)]
 

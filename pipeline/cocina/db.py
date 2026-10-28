@@ -26,3 +26,14 @@ def norm(text: str | None) -> str:
     """Python twin of SQL norm(): lowercase, accents stripped, whitespace collapsed."""
     decomposed = unicodedata.normalize("NFKD", text or "")
     return " ".join("".join(c for c in decomposed if not unicodedata.combining(c)).lower().split())
+
+
+def all_rows(query, page: int = 1000) -> list[dict]:
+    """Every row of a query, paging past PostgREST's max_rows (1000).
+    `query` builds a fresh, ordered request each call: lambda: client().table(…).select(…).order("id")."""
+    rows: list[dict] = []
+    while True:
+        batch = query().range(len(rows), len(rows) + page - 1).execute().data
+        rows += batch
+        if len(batch) < page:
+            return rows
