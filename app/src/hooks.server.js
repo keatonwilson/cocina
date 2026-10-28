@@ -11,7 +11,7 @@ const NO_STORE = { 'cache-control': 'private, no-store' };
 // For page loads these are built here rather than thrown: a thrown redirect or
 // error skips setHeaders. They carry no session cookie either, so nothing
 // per-person can be cached. SvelteKit's own fetches (an enhanced Accept or
-// Reject, a data reload) still get the thrown kind, the JSON its client follows.
+// Reject, a data reload) get thrown redirects instead, the JSON its client follows.
 const toLogin = () => new Response(null, { status: 303, headers: { ...NO_STORE, location: '/login' } });
 const notReviewer = () => new Response(
   '<!doctype html><meta charset="utf-8"><title>Not a reviewer</title>' +
@@ -36,13 +36,15 @@ export async function handle({ event, resolve }) {
   if (path === '/review' || path.startsWith('/review/')) {
     // getUser() asks Supabase Auth, so a forged cookie doesn't get in
     const { data: { user } } = await event.locals.supabase.auth.getUser();
-    const kitFetch = event.isDataRequest || event.request.headers.has('x-sveltekit-action');
+    const action = event.request.headers.has('x-sveltekit-action');
     if (!user) {
-      if (kitFetch) redirect(303, '/login');
+      if (action || event.isDataRequest) redirect(303, '/login');
       return toLogin();
     }
     if (!isReviewer(user.email, env.REVIEWERS)) {
-      if (kitFetch) error(403, 'This account is not a reviewer.');
+      // An enhanced form can't show a thrown error: send it to /review, whose data request shows the 403
+      if (action) redirect(303, '/review');
+      if (event.isDataRequest) error(403, 'This account is not a reviewer.');
       return notReviewer();
     }
     event.locals.reviewer = user.email;
