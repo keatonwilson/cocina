@@ -28,7 +28,8 @@ Rules:
 comparison or praise that the facts don't state.
 - Write 2 to 4 plain sentences in English. The first stands alone: what the food is, in one line.
 - Every sentence lists in `claims` the ids of the facts it states, and states nothing beyond them.
-- Where facts disagree (two places of origin, say), say that sources differ rather than choosing one.
+- Where facts disagree (two different places of origin, say), say that sources differ rather than choosing \
+one. A place inside another (Hermosillo and Sonora) is not a disagreement: use the more specific one.
 - Write in your own words; never copy a fact's wording at length.
 - Leave out a fact that doesn't fit a short description rather than forcing it in."""
 
@@ -89,22 +90,30 @@ def write(ai: anthropic.Anthropic, slug: str) -> dict:
         db().rpc("reject_proposal", {"p_id": w["proposal_id"], "p_reviewer": "write",
                                      "p_reason": "stale: rewritten from the current claims"}).execute()
 
-    with ai.beta.messages.stream(
-        model=MODEL,
-        max_tokens=4000,
-        output_config={"effort": "medium"},
-        system=WRITE_SYSTEM,
-        messages=[{"role": "user", "content": _facts(card)}],
-        output_format=Writeup,
-        **FALLBACK,
-    ) as stream:
-        resp = stream.get_final_message()
-    cost = round(_cost(resp.usage), 4)
-    if resp.stop_reason == "refusal" or resp.parsed_output is None:
-        errors = [f"stop_reason={resp.stop_reason}"]
-    else:
+    # One retry, told what failed: the usual slip is reusing a quote's wording
+    cost, errors, prompt = 0.0, [], _facts(card)
+    for _ in range(2):
+        with ai.beta.messages.stream(
+            model=MODEL,
+            max_tokens=4000,
+            output_config={"effort": "medium"},
+            system=WRITE_SYSTEM,
+            messages=[{"role": "user", "content": prompt}],
+            output_format=Writeup,
+            **FALLBACK,
+        ) as stream:
+            resp = stream.get_final_message()
+        cost = round(cost + _cost(resp.usage), 4)
+        if resp.stop_reason == "refusal" or resp.parsed_output is None:
+            errors = [f"stop_reason={resp.stop_reason}"]
+            break
         sentences = [s.model_dump() for s in resp.parsed_output.sentences]
         errors = problems(sentences, card)
+        if not errors:
+            break
+        prompt = (_facts(card) + "\n\nYour last attempt failed these checks; write it again:\n"
+                  + "\n".join(f"- {e}" for e in errors)
+                  + "\n\nRejected attempt:\n" + "\n".join(f"{i}. {s['text']}" for i, s in enumerate(sentences, 1)))
     if errors:
         db().table("run_log").insert({"agent": "write", "cost_usd": cost,
                                       "errors": [{"slug": slug, "error": e} for e in errors]}).execute()

@@ -14,6 +14,7 @@ In the terminal: a accept · r reject (asks why) · s skip · o open the sources
 
 import argparse
 import getpass
+from urllib.parse import urlsplit
 import os
 import webbrowser
 from typing import Literal
@@ -136,8 +137,9 @@ a human reading it. Each sentence (S1, S2…) is followed by the facts it cites,
 
 List a problem for a sentence only when it states something its cited facts don't: a detail, \
 place, date, ingredient, quality or comparison that isn't in them, or something that contradicts \
-them. Rewording, joining facts and leaving facts out are fine. List nothing else; a description \
-with no problems is published."""
+them. Rewording, joining facts and leaving facts out are fine, and so is "sources differ" when \
+cited facts from different sources give different answers to the same question. List nothing \
+else; a description with no problems is published."""
 
 
 class Problem(BaseModel):
@@ -188,7 +190,8 @@ def auto_review(entity: str | None = None) -> None:
         elif _target(p):
             by_entity.setdefault(about(p)["id"], []).append(p)
     # Claims first: a writeup only cites what is already published
-    jobs = [(_auto_claims, about(ps[0]), ps) for ps in by_entity.values()]
+    # An entity whose open proposals are all flagged has nothing new to judge (they wait for a human)
+    jobs = [(_auto_claims, about(ps[0]), ps) for ps in by_entity.values() if any(not p.get("flag") for p in ps)]
     jobs += [(_auto_writeup, about(p), [p]) for p in writeups if not p.get("flag")]
     for job, ent, proposals in jobs:
         try:
@@ -259,8 +262,16 @@ def writeup_text(w: dict, facts: dict[int, dict]) -> str:
     lines = [f"Food: {w['entity']['name']} ({w['entity']['kind']})", ""]
     for i, sentence in enumerate(w["sentences"], 1):
         lines.append(f"S{i}: {sentence['text']}")
-        lines += [f"   [{cid}] {facts[cid]['predicate']}: {facts[cid]['value']}" for cid in sentence["claims"]]
+        lines += [f"   [{cid}] {facts[cid]['predicate']}: {facts[cid]['value']} (from {_hosts(facts[cid])})"
+                  for cid in sentence["claims"]]
     return "\n".join(lines)
+
+
+def _hosts(claim: dict) -> str:
+    """Where a card claim's sources live, so a judge can see whether two facts share one."""
+    hosts = {urlsplit(s["url"]).netloc.removeprefix("www.") if s.get("url") else s.get("publisher") or "?"
+             for s in claim["sources"]}
+    return ", ".join(sorted(hosts))
 
 
 def _auto_writeup(ai: anthropic.Anthropic, ent: dict, proposals: list[dict]) -> None:
