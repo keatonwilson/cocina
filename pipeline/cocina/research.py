@@ -169,6 +169,8 @@ def save_source(page: dict, meta) -> int | None:
         "published_on": published_on,
         "content_hash": page["content_hash"],
         "fetched_at": page["fetched_at"],
+        # Only when known (Wikidata: CC0, a dataset), so an upsert never blanks them
+        **{k: getattr(meta, k) for k in ("license", "work_type") if getattr(meta, k, None)},
     }, on_conflict="url").execute().data[0]
     db().table("source_text").upsert({"source_id": row["id"], "text": page["text"]}).execute()
     for creator in creators:
@@ -184,6 +186,72 @@ def link(name: str | None) -> int | None:
     if len(hits) != 1:
         return None
     return db().table("entity").select("id").eq("slug", hits[0]["slug"]).single().execute().data["id"]
+
+
+def propose(entity: dict, pages: list[dict], meta: dict, claims: list[dict], run: dict,
+            links: dict[str, bool], errors: list) -> int:
+    """Write quote-checked claims as proposals; returns how many were made.
+
+    Each page becomes a credited source (none when a creator opted out), agreeing
+    claims become one claim with evidence from each page, an also_known_as claim
+    brings its alias, and a fact already live only gains the new evidence.
+    `claims` are dicts with page (1-based), predicate, value, object_name, quote;
+    `meta` maps a page index to its credit (title, authors, publisher, published_on).
+    """
+    made = 0
+    source_ids: dict[int, int | None] = {}   # page → source id; None when a creator opted out
+    live = db().table("claim").select("id, predicate, value, status, proposal_id") \
+        .eq("entity_id", entity["id"]).in_("status", ["proposed", "published"]).execute().data
+    existing = {(c["predicate"], norm(c["value"])): c for c in live}
+    # Live aliases, the ones the unique key on (entity, norm(text)) covers
+    names = {norm(entity["name"])} | {norm(a["text"]) for a in db().table("alias").select("text")
+                                      .eq("entity_id", entity["id"]).in_("status", ["proposed", "published"])
+                                      .execute().data}
+
+    for g in group_claims(claims):
+        for e in g["evidence"]:
+            if e["page"] not in source_ids:
+                page = pages[e["page"] - 1]
+                source_ids[e["page"]] = save_source(page, meta.get(e["page"]) or _bare(page))
+                if source_ids[e["page"]] is None:
+                    errors.append({"url": page["url"], "skipped": "a creator opted out (do_not_use)"})
+        old = existing.get((g["predicate"], norm(g["value"])))
+        # Sources already behind this claim, in any status: (claim, source) is unique,
+        # so a proposal of them would come out empty
+        cited = {r["source_id"] for r in db().table("evidence").select("source_id")
+                 .eq("claim_id", old["id"]).execute().data} if old else set()
+        evidence = [e for e in g["evidence"] if source_ids[e["page"]] not in (None, *cited)]
+        if not evidence:
+            continue
+        hosts = sorted({urlsplit(pages[e["page"] - 1]["url"]).netloc.removeprefix("www.") for e in evidence})
+        if old and old["status"] == "proposed":
+            claim_id, proposal_id = old["id"], old["proposal_id"]        # pending: just add evidence
+        else:
+            proposal_id = db().table("proposal").insert({
+                "author": run["agent"], "run_id": run["id"],
+                "rationale": (f"{len(hosts)} more source(s) agree" if old else f"{len(hosts)} source(s)")
+                             + ": " + ", ".join(hosts),
+            }).execute().data[0]["id"]
+            made += 1
+            if old:
+                claim_id = old["id"]
+            else:
+                claim_id = db().table("claim").insert({
+                    "entity_id": entity["id"], "predicate": g["predicate"], "value": g["value"],
+                    "object_id": link(g["object_name"]) if links[g["predicate"]] else None,
+                    "proposal_id": proposal_id,
+                }).execute().data[0]["id"]
+                if g["predicate"] == "also_known_as" and norm(g["value"]) not in names:
+                    names.add(norm(g["value"]))
+                    db().table("alias").insert({
+                        "entity_id": entity["id"], "text": g["value"], "claim_id": claim_id,
+                        "proposal_id": proposal_id,
+                    }).execute()
+        db().table("evidence").upsert([{
+            "claim_id": claim_id, "source_id": source_ids[e["page"]], "quote": e["quote"],
+            "fetched_at": pages[e["page"] - 1]["fetched_at"], "proposal_id": proposal_id,
+        } for e in evidence], on_conflict="claim_id,source_id", ignore_duplicates=True).execute()
+    return made
 
 
 def research(slug: str) -> dict:
@@ -231,58 +299,7 @@ def research(slug: str) -> dict:
             else:
                 errors.append({"dropped": cl.model_dump(), "why": "quote not found on the page"})
 
-        source_ids: dict[int, int | None] = {}   # page → source id; None when a creator opted out
-        live = db().table("claim").select("id, predicate, value, status, proposal_id") \
-            .eq("entity_id", entity["id"]).in_("status", ["proposed", "published"]).execute().data
-        existing = {(c["predicate"], norm(c["value"])): c for c in live}
-        # Live aliases, the ones the unique key on (entity, norm(text)) covers
-        names = {norm(entity["name"])} | {norm(a["text"]) for a in db().table("alias").select("text")
-                                          .eq("entity_id", entity["id"]).in_("status", ["proposed", "published"])
-                                          .execute().data}
-
-        for g in group_claims(kept):
-            for e in g["evidence"]:
-                if e["page"] not in source_ids:
-                    page = pages[e["page"] - 1]
-                    source_ids[e["page"]] = save_source(page, meta.get(e["page"]) or _bare(page))
-                    if source_ids[e["page"]] is None:
-                        errors.append({"url": page["url"], "skipped": "a creator opted out (do_not_use)"})
-            old = existing.get((g["predicate"], norm(g["value"])))
-            # Sources already behind this claim, in any status: (claim, source) is unique,
-            # so a proposal of them would come out empty
-            cited = {r["source_id"] for r in db().table("evidence").select("source_id")
-                     .eq("claim_id", old["id"]).execute().data} if old else set()
-            evidence = [e for e in g["evidence"] if source_ids[e["page"]] not in (None, *cited)]
-            if not evidence:
-                continue
-            hosts = sorted({urlsplit(pages[e["page"] - 1]["url"]).netloc.removeprefix("www.") for e in evidence})
-            if old and old["status"] == "proposed":
-                claim_id, proposal_id = old["id"], old["proposal_id"]        # pending: just add evidence
-            else:
-                proposal_id = db().table("proposal").insert({
-                    "author": "research", "run_id": run["id"],
-                    "rationale": (f"{len(hosts)} more source(s) agree" if old else f"{len(hosts)} source(s)")
-                                 + ": " + ", ".join(hosts),
-                }).execute().data[0]["id"]
-                proposals += 1
-                if old:
-                    claim_id = old["id"]
-                else:
-                    claim_id = db().table("claim").insert({
-                        "entity_id": entity["id"], "predicate": g["predicate"], "value": g["value"],
-                        "object_id": link(g["object_name"]) if links[g["predicate"]] else None,
-                        "proposal_id": proposal_id,
-                    }).execute().data[0]["id"]
-                    if g["predicate"] == "also_known_as" and norm(g["value"]) not in names:
-                        names.add(norm(g["value"]))
-                        db().table("alias").insert({
-                            "entity_id": entity["id"], "text": g["value"], "claim_id": claim_id,
-                            "proposal_id": proposal_id,
-                        }).execute()
-            db().table("evidence").upsert([{
-                "claim_id": claim_id, "source_id": source_ids[e["page"]], "quote": e["quote"],
-                "fetched_at": pages[e["page"] - 1]["fetched_at"], "proposal_id": proposal_id,
-            } for e in evidence], on_conflict="claim_id,source_id", ignore_duplicates=True).execute()
+        proposals += propose(entity, pages, meta, kept, run, links, errors)
     except Exception as e:
         errors.append({"error": repr(e)})
         raise
