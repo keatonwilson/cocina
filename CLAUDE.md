@@ -1,6 +1,6 @@
 # CLAUDE.md
 
-cocina is a curated knowledgebase of Mexican food concepts (dishes, salsas, chiles, techniques). Every fact is a small **claim** backed by **evidence**: a short quote from a credited **source**. Scripts and agents only *propose*. Auto-review publishes uncontested claims; a human decides the flagged ones (a conflict, or a quote that doesn't state the claim), and from phase 2 all prose. Consumers (cartoTaco's concierge first) read published data only. Design doc: "Culinary Knowledgebase: Design" (claude.ai/artifact/JKErHUCn6rYC4jYppQbJtv); phase plan in `docs/PLAN.md`.
+cocina is a curated knowledgebase of Mexican food concepts (dishes, salsas, chiles, techniques). Every fact is a small **claim** backed by **evidence**: a short quote from a credited **source**. Scripts and agents only *propose*. Auto-review publishes uncontested claims and writeups that say only what their cited claims say; a human decides the flagged ones (a conflict, a quote that doesn't state the claim, a sentence its claims don't support). Articles (phase 3) stay human-only. Consumers (cartoTaco's concierge first) read published data only. Design doc: "Culinary Knowledgebase: Design" (claude.ai/artifact/JKErHUCn6rYC4jYppQbJtv); phase plan in `docs/PLAN.md`.
 
 ## Layout
 

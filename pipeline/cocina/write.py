@@ -81,8 +81,13 @@ def write(ai: anthropic.Anthropic, slug: str) -> dict:
     if not card or not card["claims"]:
         return {"slug": slug, "skipped": "not served: no published, credited claims"}
     entity_id = db().table("entity").select("id").eq("slug", slug).single().execute().data["id"]
-    if db().table("writeup").select("id").eq("entity_id", entity_id).eq("status", "proposed").execute().data:
+    pending = (db().table("writeup").select("proposal_id, proposal(flag)").eq("entity_id", entity_id)
+               .eq("status", "proposed").execute().data)
+    if any(not (w["proposal"]["flag"] or "").startswith("stale:") for w in pending):
         return {"slug": slug, "skipped": "a writeup is already waiting for review"}
+    for w in pending:  # stale: it cites claims that are gone, so nothing to review; write afresh
+        db().rpc("reject_proposal", {"p_id": w["proposal_id"], "p_reviewer": "write",
+                                     "p_reason": "stale: rewritten from the current claims"}).execute()
 
     with ai.beta.messages.stream(
         model=MODEL,
