@@ -6,7 +6,8 @@
 --auto: Claude checks each entity's open proposals against its published facts and
 each other. A proposal whose quotes don't state it, or that can't be true alongside
 another fact, is flagged for a human; the rest go through accept_proposal, so the
-citation rules still decide. Prose and articles (phase 2+) stay human-only.
+citation rules still decide. A writeup (cocina.write) is checked sentence by sentence
+against the claims it cites. Articles (phase 3) stay human-only.
 
 In the terminal: a accept · r reject (asks why) · s skip · o open the sources · q quit
 """
@@ -28,7 +29,8 @@ SELECT = (
     "claim(id, predicate, value, status, entity:entity!claim_entity_id_fkey(id, slug, name, kind), "
     "object:entity!claim_object_id_fkey(name)), "
     "evidence(quote, locator, claim:claim(id, predicate, value, entity:entity!claim_entity_id_fkey(id, slug, name, kind)), "
-    "source(title, url, publisher, published_on, source_creator(creator(name))))"
+    "source(title, url, publisher, published_on, source_creator(creator(name)))), "
+    "writeup(id, sentences, entity:entity(id, slug, name, kind))"
 )
 
 
@@ -39,6 +41,8 @@ def credit(src: dict) -> str:
 
 
 def show(p: dict, n: int, total: int) -> list[str]:
+    if p.get("writeup"):
+        return _show_writeup(p, n, total)
     claim = (p["claim"] or [None])[0]
     target = claim or (p["evidence"][0]["claim"] if p["evidence"] else None)
     if not target:
@@ -58,12 +62,37 @@ def show(p: dict, n: int, total: int) -> list[str]:
     return [ev["source"]["url"] for ev in p["evidence"] if ev["source"].get("url")]
 
 
+def _cited(w: dict) -> dict[int, dict]:
+    """The card's claims by id, for the claims a writeup cites (a missing id: no longer published)."""
+    card = db().rpc("get_entity", {"p_slug": w["entity"]["slug"]}).execute().data or {"claims": []}
+    return {c["id"]: c for c in card["claims"]}
+
+
+def _show_writeup(p: dict, n: int, total: int) -> list[str]:
+    w = p["writeup"][0]
+    facts = _cited(w)
+    print(f"\n[{n}/{total}] {w['entity']['name']} ({w['entity']['kind']}) · writeup")
+    print(f"  {p['author']} · {p['rationale'] or ''}")
+    if p.get("flag"):
+        print(f"  ⚠ {p['flag']}")
+    urls = []
+    for i, sentence in enumerate(w["sentences"], 1):
+        print(f"  {i}. {sentence['text']}")
+        for cid in sentence["claims"]:
+            c = facts.get(cid)
+            print(f"       [{cid}] {c['predicate']}: {c['value']}" if c else f"       [{cid}] (no longer published)")
+            urls += [src["url"] for src in (c or {}).get("sources", []) if src.get("url") and src["url"] not in urls]
+    return urls
+
+
 def _target(p: dict) -> dict | None:
     """The claim a proposal is about: its new claim, or the published one it adds evidence to."""
     return (p["claim"] or [None])[0] or (p["evidence"][0]["claim"] if p["evidence"] else None)
 
 
 def about(p: dict) -> dict:
+    if p.get("writeup"):
+        return p["writeup"][0]["entity"]
     t = _target(p)
     return t["entity"] if t else {}
 
@@ -102,6 +131,24 @@ class Verdict(BaseModel):
     flags: list[Flag]
 
 
+AUTO_WRITEUP_SYSTEM = """You check a short description of a Mexican food before it publishes without \
+a human reading it. Each sentence (S1, S2…) is followed by the facts it cites, by id.
+
+List a problem for a sentence only when it states something its cited facts don't: a detail, \
+place, date, ingredient, quality or comparison that isn't in them, or something that contradicts \
+them. Rewording, joining facts and leaving facts out are fine. List nothing else; a description \
+with no problems is published."""
+
+
+class Problem(BaseModel):
+    sentence: int
+    why: str
+
+
+class WriteupCheck(BaseModel):
+    problems: list[Problem]
+
+
 def split(proposals: list[dict], flags: list,
           rejected: dict[tuple[str, str], str]) -> tuple[list[int], dict[int, str]]:
     """(proposals to accept, {proposal: flag}). A new claim restating a rejected fact
@@ -134,42 +181,43 @@ def _facts(ent: dict, decided: list[dict], proposals: list[dict]) -> str:
 def auto_review(entity: str | None = None) -> None:
     ai = anthropic.Anthropic(timeout=600, max_retries=1)
     by_entity: dict[int, list[dict]] = {}
+    writeups = []
     for p in open_proposals(entity):
-        if _target(p):
+        if p.get("writeup"):
+            writeups.append(p)
+        elif _target(p):
             by_entity.setdefault(about(p)["id"], []).append(p)
-    for proposals in by_entity.values():
+    # Claims first: a writeup only cites what is already published
+    jobs = [(_auto_claims, about(ps[0]), ps) for ps in by_entity.values()]
+    jobs += [(_auto_writeup, about(p), [p]) for p in writeups if not p.get("flag")]
+    for job, ent, proposals in jobs:
         try:
-            _auto_entity(ai, about(proposals[0]), proposals)
-        except Exception as e:  # one entity's failure doesn't stop the rest
+            job(ai, ent, proposals)
+        except Exception as e:  # one failure doesn't stop the rest
             # ponytail: a DB error after the model call loses that call's cost from run_log
-            print(f"{about(proposals[0])['slug']}: auto-review failed: {e!r}; "
+            print(f"{ent['slug']}: auto-review failed: {e!r}; "
                   "anything accepted before the error stays published, the rest stays open")
             db().table("run_log").insert({"agent": "auto-review", "errors": [{"error": repr(e)}]}).execute()
 
 
-def _auto_entity(ai: anthropic.Anthropic, ent: dict, proposals: list[dict]) -> None:
-    decided = (db().table("claim").select("id, predicate, value, status, proposal(reason)")
-               .eq("entity_id", ent["id"]).in_("status", ["published", "rejected"]).execute().data)
-    rejected = {(c["predicate"], norm(c["value"])):
-                f"conflict: restates R{c['id']}, rejected: {(c['proposal'] or {}).get('reason')}"
-                for c in decided if c["status"] == "rejected"}
+def _check(ai: anthropic.Anthropic, system: str, content: str, schema) -> tuple[object, float]:
+    """One structured model call: (parsed output or None, cost)."""
     with ai.beta.messages.stream(
         model=MODEL,
         max_tokens=8000,
         output_config={"effort": "medium"},
-        system=AUTO_SYSTEM,
-        messages=[{"role": "user", "content": _facts(ent, decided, proposals)}],
-        output_format=Verdict,
+        system=system,
+        messages=[{"role": "user", "content": content}],
+        output_format=schema,
         **FALLBACK,
     ) as stream:
         resp = stream.get_final_message()
-    cost = round(_cost(resp.usage), 4)
-    if resp.stop_reason == "refusal" or resp.parsed_output is None:
-        print(f"{ent['slug']}: auto-review failed (stop_reason={resp.stop_reason}); nothing accepted")
-        db().table("run_log").insert({"agent": "auto-review", "cost_usd": cost,
-                                      "errors": [{"error": f"stop_reason={resp.stop_reason}"}]}).execute()
-        return
-    accept, flags = split(proposals, resp.parsed_output.flags, rejected)
+    ok = resp.stop_reason != "refusal" and resp.parsed_output is not None
+    return (resp.parsed_output if ok else None), round(_cost(resp.usage), 4)
+
+
+def _publish(label: str, accept: list[int], flags: dict[int, str], cost: float) -> None:
+    """Store the flags, accept the rest through the gate, log the run."""
     for pid, why in flags.items():
         db().table("proposal").update({"flag": why}).eq("id", pid).execute()
     refused = []
@@ -181,12 +229,55 @@ def _auto_entity(ai: anthropic.Anthropic, ent: dict, proposals: list[dict]) -> N
     db().table("run_log").insert({"agent": "auto-review", "cost_usd": cost,
                                   "proposals": len(accept) - len(refused),
                                   "errors": [{"refused": r} for r in refused]}).execute()
-    print(f"{ent['slug']}: {len(accept) - len(refused)} accepted, {len(flags)} flagged for you, "
+    print(f"{label}: {len(accept) - len(refused)} accepted, {len(flags)} flagged for you, "
           f"{len(refused)} refused · ${cost:.3f}")
     for pid, why in flags.items():
         print(f"  #{pid} {why}")
     for r in refused:
         print(f"  refused {r}")
+
+
+def _failed(label: str, cost: float) -> None:
+    print(f"{label}: auto-review failed (refused or unparsed); nothing accepted")
+    db().table("run_log").insert({"agent": "auto-review", "cost_usd": cost,
+                                  "errors": [{"error": f"{label}: refused or unparsed"}]}).execute()
+
+
+def _auto_claims(ai: anthropic.Anthropic, ent: dict, proposals: list[dict]) -> None:
+    decided = (db().table("claim").select("id, predicate, value, status, proposal(reason)")
+               .eq("entity_id", ent["id"]).in_("status", ["published", "rejected"]).execute().data)
+    rejected = {(c["predicate"], norm(c["value"])):
+                f"conflict: restates R{c['id']}, rejected: {(c['proposal'] or {}).get('reason')}"
+                for c in decided if c["status"] == "rejected"}
+    out, cost = _check(ai, AUTO_SYSTEM, _facts(ent, decided, proposals), Verdict)
+    if out is None:
+        return _failed(ent["slug"], cost)
+    _publish(ent["slug"], *split(proposals, out.flags, rejected), cost)
+
+
+def writeup_text(w: dict, facts: dict[int, dict]) -> str:
+    lines = [f"Food: {w['entity']['name']} ({w['entity']['kind']})", ""]
+    for i, sentence in enumerate(w["sentences"], 1):
+        lines.append(f"S{i}: {sentence['text']}")
+        lines += [f"   [{cid}] {facts[cid]['predicate']}: {facts[cid]['value']}" for cid in sentence["claims"]]
+    return "\n".join(lines)
+
+
+def _auto_writeup(ai: anthropic.Anthropic, ent: dict, proposals: list[dict]) -> None:
+    p = proposals[0]
+    w = p["writeup"][0]
+    facts = _cited(w)
+    label = f"{ent['slug']} (writeup)"
+    gone = sorted({cid for s in w["sentences"] for cid in s["claims"]} - set(facts))
+    if gone:  # the gate would refuse it: say why instead
+        return _publish(label, [], {p["id"]: f"stale: cites claims that are no longer published: {gone}"}, 0)
+    out, cost = _check(ai, AUTO_WRITEUP_SYSTEM, writeup_text(w, facts), WriteupCheck)
+    if out is None:
+        return _failed(label, cost)
+    if out.problems:
+        why = "unsupported: " + "; ".join(f"S{x.sentence}: {x.why}" for x in out.problems)
+        return _publish(label, [], {p["id"]: why}, cost)
+    _publish(label, [p["id"]], {}, cost)
 
 
 def review(entity: str | None, kind: str | None) -> None:

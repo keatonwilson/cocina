@@ -1,4 +1,4 @@
-"""The pipeline logic that needs no network or DB: quote check, grouping, page text, robots, noai, auto-review."""
+"""The pipeline logic that needs no network or DB: quotes, grouping, page text, robots, noai, auto-review, writeups."""
 
 import urllib.request
 from email.message import Message
@@ -106,3 +106,17 @@ def test_auto_review_accepts_only_what_it_was_asked_about_and_did_not_flag():
     accept, new = split(proposals, flags, rejected)
     assert accept == [1, 5]                               # 3 still waits for a human
     assert new == {2: "conflict: corn vs flour (P9)", 4: "conflict: restates R7"}  # 99 ignored
+
+
+def test_a_writeup_must_cite_its_card_and_not_copy_its_quotes():
+    from cocina.write import problems
+    card = {"claims": [
+        {"id": 1, "sources": [{"quote": "Chavindecas are two large corn tortillas grilled with meat and cheese inside."}]},
+        {"id": 2, "sources": [{"quote": "a Calentano dish"}]},
+    ]}
+    ok = [{"text": "Chavindeca is a grilled snack of corn tortillas around meat and cheese.", "claims": [1]}]
+    assert problems(ok, card) == []
+    copied = [{"text": "They are two large corn tortillas grilled with meat and cheese, locals say.", "claims": [1]}]
+    assert problems(copied, card) == ["sentence 1 copies 8+ words of a source quote"]
+    stray = [{"text": "It is from Michoacán.", "claims": [1, 9]}, {"text": "Delicious.", "claims": []}]
+    assert problems(stray, card) == ["sentence 1 cites claims the card doesn't carry: [9]", "sentence 2 cites nothing"]

@@ -4,9 +4,9 @@ cocina is a curated knowledgebase of Mexican food concepts (dishes, salsas, chil
 
 ## Layout
 
-- `supabase/migrations/` – the schema, citation rules and read functions (`001_core.sql`)
+- `supabase/migrations/` – the schema, citation rules and read functions (`001_core`), proposal flags (`002`), writeups (`003`)
 - `supabase/tests/` – pgTAP tests of the citation rules (`supabase test db`)
-- `pipeline/` – Python 3.12: `seed`, `research`, `review`, `snapshot` (run as `python -m cocina.<name>` from `pipeline/`)
+- `pipeline/` – Python 3.12: `seed`, `research`, `write`, `review`, `snapshot` (run as `python -m cocina.<name>` from `pipeline/`)
 - `app/` – SvelteKit on Vercel: the read-only MCP server at `/mcp` (the review inbox comes here in phase 2)
 - `.env` at the repo root is shared by the pipeline (symlinked as `pipeline/.env`) and the app (`kit.env.dir`); see `.env.example`
 
@@ -18,9 +18,10 @@ cocina is a curated knowledgebase of Mexican food concepts (dishes, salsas, chil
 - `cd app && pnpm check` – type check; `pnpm dev` serves `/mcp`
 - `python -m cocina.seed` – proposed entities from cartoTaco's spec tables and Salsa Atlas (read-only, anon key; re-runnable)
 - `python -m cocina.research <slug>...` – search → fetch → extract → quote check → proposals (~$0.15–0.25 and ~30 s per entity)
-- `python -m cocina.review --auto [--entity slug]` – after research: Claude flags conflicting or unsupported proposals (`proposal.flag`), `accept_proposal` publishes the rest as `auto-review` (~$0.02 per entity)
+- `python -m cocina.write <slug>... | --all` – a writeup (2–4 cited sentences) from an entity's published claims; `--all` = served entities with no live writeup (~$0.02 each)
+- `python -m cocina.review --auto [--entity slug]` – after research or write: Claude flags conflicting or unsupported proposals (`proposal.flag`), `accept_proposal` publishes the rest as `auto-review` (~$0.02 per entity)
 - `python -m cocina.review [--entity slug] [--kind dish]` – a human decides what's still open, flag shown
-- `python -m cocina.snapshot [--release]` – `snapshots/kb-YYYY.MM.DD.jsonl`, optionally a GitHub release
+- `python -m cocina.snapshot [--release]` – `snapshots/kb-YYYY.MM.DD.jsonl`, optionally a GitHub release (a second one that day is tagged `.2`)
 
 ## Data model (and why)
 
@@ -31,6 +32,7 @@ cocina is a curated knowledgebase of Mexican food concepts (dishes, salsas, chil
 - `confidence` (distinct sites/works agreeing) and `verified_at` are derived in `card()`, never stored.
 - `alias.claim_id` is set for a sourced name (`also_known_as`), null for a search hint (seed names, misspellings).
 - Seed text from cartoTaco goes into `entity.note`: a research hint ("may contain errors"), never evidence.
+- `writeup` (entity, `sentences` jsonb `[{text, claims: [ids]}]`, status, proposal): prose made only from published claims, every sentence citing the claims it states. One published per entity; accepting a new one retires the old. `write.py` refuses a sentence that copies 8+ consecutive words of a quote.
 
 ## Rules the database enforces
 
@@ -38,12 +40,13 @@ Deferred constraint triggers check at commit, so a whole proposal is judged at o
 - a published claim needs published evidence from a source with an author or a publisher, and no `do_not_use` creator
 - a published entity needs a published claim; a published claim's `object_id` must be published
 - an alias with a `claim_id` is published only with its claim
+- a published writeup's every sentence cites at least one claim, and each cited claim is its entity's own, published and still credited (`sentences_ok`); `card()` and RLS hide a writeup once a cited claim loses its credit
 
 `accept_proposal(id, reviewer)` is the one gate: it publishes the proposal's rows (plus a seeded entity and its name hints on its first accepted claim) and retires what a `change` supersedes. `retire`/`merge` ops aren't implemented yet (phase 2/3). `reject_proposal(id, reviewer, reason)` stores the reason for the agent. Both are service-role only.
 
 ## Reads (published only, whoever calls)
 
-`cards()`, `get_entity(slug)`, `search_entities(q, kind, all, limit)` (exact → typo-tolerant with search.js's thresholds → whole-word containment), `related(slug, predicate, hops ≤ 2)`, `kb_version()` (last accepted decision; every MCP answer carries it). RLS lets anon read published rows plus sources/creators; `proposal`, `run_log`, `source_text` are service-role only.
+`cards()`, `get_entity(slug)` (claims with ids, the live `writeup`), `search_entities(q, kind, all, limit)` (exact → typo-tolerant with search.js's thresholds → whole-word containment), `related(slug, predicate, hops ≤ 2)`, `kb_version()` (last accepted decision; every MCP answer carries it). RLS lets anon read published rows plus sources/creators; `proposal`, `run_log`, `source_text` are service-role only.
 
 ## Research pipeline notes
 
