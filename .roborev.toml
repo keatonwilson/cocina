@@ -16,8 +16,9 @@ cocina is a curated knowledgebase: every published fact must trace to a credited
   rejected or retired rows, source_text, proposal or run_log.
 - The repo is public: flag secrets, keys, personal data or local paths in code, config or docs.
 - The pipeline fetches untrusted web pages and hands them to a model: flag any path where page
-  content could become published data without the quote check and human review, and any fetch
-  that ignores robots.txt or a noai opt-out.
+  content could become published data without the quote check and review, and any fetch
+  that ignores robots.txt or a noai opt-out. The one approved exception is Wikidata's Action API
+  (www.wikidata.org/w/api.php) in pipeline/cocina/wikidata.py; flag it being widened.
 - Simplicity is a goal. Prefer the standard library and platform features; don't ask for
   abstractions, config or layers the code doesn't need yet. Deliberate shortcuts carry a
   `ponytail:` comment naming their ceiling; don't flag those unless the ceiling is already hit.

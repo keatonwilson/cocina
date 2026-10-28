@@ -135,3 +135,40 @@ def test_all_rows_pages_past_the_row_cap():
             return type("Response", (), {"data": self.rows})()
 
     assert all_rows(Query) == data
+
+
+def _item(en, es, aliases_es=(), classes=()):
+    return {"labels": {"en": {"value": en}, "es": {"value": es}},
+            "aliases": {"es": [{"value": a} for a in aliases_es]},
+            "claims": {"P31": [{"mainsnak": {"datavalue": {"value": {"id": c}}}} for c in classes]}}
+
+
+def test_wikidata_links_only_one_exact_food_item():
+    from cocina.wikidata import pick
+    birria = _item("Birria", "birria", ["birria de chivo"])
+    film = _item("Birria", "Birria (película)")               # same name, not a food
+    stew = _item("Birria stew", "estofado")                   # a near miss
+    food = lambda item: item is not film  # noqa: E731
+    assert pick("Birria", {"Q1": birria, "Q2": film, "Q3": stew}, food) == "Q1"
+    assert pick("Birria", {"Q1": birria, "Q4": _item("birria", "Birria")}, lambda i: True) is None  # two: ambiguous
+    assert pick("Pozole", {"Q1": birria}, food) is None
+
+
+def test_wikidata_names_become_quotable_claims_for_new_names_only():
+    from cocina.research import quote_found
+    from cocina.wikidata import page_and_claims
+    page, claims = page_and_claims("Q1", _item("Birria", "Birria", ["birria de chivo", "Birria"]), {"birria"})
+    assert page["url"] == "https://www.wikidata.org/wiki/Q1"
+    assert [c["value"] for c in claims] == ["birria de chivo"]
+    assert claims[0]["quote"] == "Also known as (es): birria de chivo"
+    assert quote_found(claims[0]["quote"], page["text"])
+
+
+def test_wikidata_food_walks_up_the_subclass_tree(monkeypatch):
+    from cocina import wikidata
+    tree = {"Q746549": {"claims": {"P279": [{"mainsnak": {"datavalue": {"value": {"id": "Q2095"}}}}]}},   # dish ⊂ food
+            "Q11424": {"claims": {}}}                                                                    # film
+    monkeypatch.setattr(wikidata, "_entities", lambda ids, props: {q: tree[q] for q in ids})
+    monkeypatch.setattr(wikidata, "_parents", {})
+    assert wikidata.is_food(_item("Birria", "Birria", classes=["Q746549"]))
+    assert not wikidata.is_food(_item("Birria", "Birria", classes=["Q11424"]))

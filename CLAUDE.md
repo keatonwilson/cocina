@@ -18,6 +18,7 @@ cocina is a curated knowledgebase of Mexican food concepts (dishes, salsas, chil
 - `cd app && pnpm check && pnpm test` – type check, node:test; `pnpm dev` serves `/mcp` and `/review`
 - `python -m cocina.seed` – proposed entities from cartoTaco's spec tables and Salsa Atlas (read-only, anon key; re-runnable)
 - `python -m cocina.research <slug>...` – search → fetch → extract → quote check → proposals (~$0.15–0.25 and ~30 s per entity)
+- `python -m cocina.wikidata <slug>... | --all` – English/Spanish labels and aliases of the one Wikidata food item named exactly like the entity, proposed as `also_known_as` claims (source: Wikidata, CC0); free
 - `python -m cocina.write <slug>... | --all` – a writeup (2–4 cited sentences) from an entity's published claims; `--all` = served entities with no live writeup (~$0.02 each)
 - `python -m cocina.review --auto [--entity slug]` – after research or write: Claude flags conflicting or unsupported proposals (`proposal.flag`), `accept_proposal` publishes the rest as `auto-review` (~$0.02 per entity)
 - `python -m cocina.review [--entity slug] [--kind dish]` – a human decides what's still open, flag shown
@@ -52,6 +53,7 @@ Deferred constraint triggers check at commit, so a whole proposal is judged at o
 
 - Search uses `web_search_20250305` on purpose (the newer variant's filtering sandbox failed in cartoTacoMenuExtract); URLs come from the search result blocks, not model text. Social/aggregator hosts are skipped (`SKIP_HOSTS`).
 - Pages are fetched by us (`fetch.py`, stdlib): robots.txt with our UA, `noai` meta respected, text hashed for the future auditor.
+- **One robots exception:** Wikidata's Action API (`www.wikidata.org/w/api.php`, used only by `wikidata.py`). Its robots.txt disallows crawlers on `/w/`, but the API is documented for programs; the owner approved using it on 2026-10-28 with our UA, one request at a time and `maxlag`. Nothing else skips `fetch.allowed()`.
 - Extraction: `claude-sonnet-5-5`, streamed, effort `medium`, structured output whose predicate enum comes from the DB. Server-side `fallbacks: "default"` is on for both calls.
 - A claim is dropped unless its quote is on the fetched page (`quote_found`). Every run writes a `run_log` row (cost, drops, skips, caps).
 
