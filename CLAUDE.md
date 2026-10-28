@@ -7,7 +7,7 @@ cocina is a curated knowledgebase of Mexican food concepts (dishes, salsas, chil
 - `supabase/migrations/` – the schema, citation rules and read functions (`001_core`), proposal flags (`002`), writeups (`003`)
 - `supabase/tests/` – pgTAP tests of the citation rules (`supabase test db`)
 - `pipeline/` – Python 3.12: `seed`, `research`, `write`, `review`, `snapshot` (run as `python -m cocina.<name>` from `pipeline/`)
-- `app/` – SvelteKit on Vercel: the read-only MCP server at `/mcp` (the review inbox comes here in phase 2)
+- `app/` – SvelteKit on Vercel: the read-only MCP server at `/mcp` and the review inbox at `/review` (Supabase magic-link sign-in, `REVIEWERS` allowlist; decisions go through the same `accept_proposal`/`reject_proposal`, run server-side with the secret key and signed with the reviewer's email)
 - `.env` at the repo root is shared by the pipeline (symlinked as `pipeline/.env`) and the app (`kit.env.dir`); see `.env.example`
 
 ## Commands
@@ -15,7 +15,7 @@ cocina is a curated knowledgebase of Mexican food concepts (dishes, salsas, chil
 - `supabase start` – local Postgres + REST (migrations applied). `supabase db reset` re-applies them
 - `supabase test db` – citation-rule tests
 - `cd pipeline && .venv/bin/pytest -q` – quote check, grouping, page text (no network)
-- `cd app && pnpm check` – type check; `pnpm dev` serves `/mcp`
+- `cd app && pnpm check && pnpm test` – type check, node:test; `pnpm dev` serves `/mcp` and `/review`
 - `python -m cocina.seed` – proposed entities from cartoTaco's spec tables and Salsa Atlas (read-only, anon key; re-runnable)
 - `python -m cocina.research <slug>...` – search → fetch → extract → quote check → proposals (~$0.15–0.25 and ~30 s per entity)
 - `python -m cocina.write <slug>... | --all` – a writeup (2–4 cited sentences) from an entity's published claims; `--all` = served entities with no live writeup (~$0.02 each)
