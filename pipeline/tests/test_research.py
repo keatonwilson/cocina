@@ -172,3 +172,12 @@ def test_wikidata_food_walks_up_the_subclass_tree(monkeypatch):
     monkeypatch.setattr(wikidata, "_parents", {})
     assert wikidata.is_food(_item("Birria", "Birria", classes=["Q746549"]))
     assert not wikidata.is_food(_item("Birria", "Birria", classes=["Q11424"]))
+
+
+def test_wikidata_retry_after_is_seconds_capped_at_a_minute():
+    from cocina.wikidata import _wait
+    assert _wait("120") == 60
+    assert _wait(" 7 ") == 7
+    assert _wait("Wed, 21 Oct 2026 07:28:00 GMT") == 5   # an HTTP date: don't crash, wait a little
+    assert _wait("\xb2") == 5                             # isdigit() would let this through to int()
+    assert _wait(None) == 5

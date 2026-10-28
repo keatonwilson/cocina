@@ -39,7 +39,7 @@ BUSY = {"maxlag", "cirrussearch-too-busy-error", "ratelimited"}   # transient: w
 
 def _wait(retry_after: str | None) -> int:
     """Seconds to wait for a Retry-After: a number of seconds (an HTTP date or junk → 5), at most a minute."""
-    return min(int(retry_after), 60) if retry_after and retry_after.strip().isdigit() else 5
+    return min(int(retry_after), 60) if retry_after and retry_after.strip().isdecimal() else 5
 
 
 def _api(**params) -> dict:
