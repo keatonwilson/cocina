@@ -42,7 +42,8 @@ def _api(**params) -> dict:
     for _ in range(4):
         status, headers, body, _final = _get(url)
         data = json.loads(body or b"{}")
-        if data.get("error", {}).get("code") in BUSY:          # Wikidata is busy: wait as asked
+        # Busy, at the edge (429/503, empty body) or in the API: wait as asked
+        if status in (429, 503) or data.get("error", {}).get("code") in BUSY:
             time.sleep(int(headers.get("Retry-After") or 5))
             continue
         if status >= 400 or "error" in data:
@@ -152,6 +153,9 @@ def wikidata(slug: str) -> dict:
     errors, made = [], 0
     try:
         made = propose(entity, [page], meta, claims, run, links, errors)
+    except Exception as e:  # as research does: the run_log says what broke
+        errors.append({"error": repr(e)})
+        raise
     finally:
         db().table("run_log").update({"finished_at": datetime.now(timezone.utc).isoformat(),
                                       "proposals": made, "errors": errors}).eq("id", run["id"]).execute()
