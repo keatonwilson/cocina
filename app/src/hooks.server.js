@@ -11,6 +11,9 @@ const SIGNED_IN = ['/review', '/login', '/auth'];
 export async function handle({ event, resolve }) {
   const path = event.url.pathname;
   if (!SIGNED_IN.some((p) => path === p || path.startsWith(`${p}/`))) return resolve(event);
+  // Per-person pages that may set session cookies: never cached by a CDN or proxy
+  // (covers the no-cache headers @supabase/ssr passes to setAll)
+  event.setHeaders({ 'cache-control': 'private, no-store' });
 
   event.locals.supabase = createServerClient(env.COCINA_SUPABASE_URL, env.COCINA_SUPABASE_ANON_KEY, {
     cookies: {

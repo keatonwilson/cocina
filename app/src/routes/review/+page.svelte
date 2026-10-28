@@ -36,7 +36,7 @@
     {items.length} flagged for you{#if data.waiting} · {data.waiting} more waiting for auto-review{/if}
     · keys: <kbd>a</kbd> accept, <kbd>r</kbd> reject, <kbd>j</kbd>/<kbd>k</kbd> move
   </p>
-  <form method="POST" action="?/logout" use:enhance><button class="quiet">Sign out</button></form>
+  <form method="POST" action="/auth/logout"><button class="quiet">Sign out</button></form>
 </header>
 
 <main>
