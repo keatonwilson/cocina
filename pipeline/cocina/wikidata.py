@@ -37,6 +37,11 @@ CLASS_DEPTH = 8          # subclass hops to look for food before giving up
 BUSY = {"maxlag", "cirrussearch-too-busy-error", "ratelimited"}   # transient: wait and retry
 
 
+def _wait(retry_after: str | None) -> int:
+    """Seconds to wait for a Retry-After: a number of seconds (an HTTP date or junk → 5), at most a minute."""
+    return min(int(retry_after), 60) if retry_after and retry_after.strip().isdigit() else 5
+
+
 def _api(**params) -> dict:
     url = API + "?" + urlencode({**params, "format": "json", "maxlag": 5})
     for _ in range(4):
@@ -44,7 +49,7 @@ def _api(**params) -> dict:
         data = json.loads(body or b"{}")
         # Busy, at the edge (429/503, empty body) or in the API: wait as asked
         if status in (429, 503) or data.get("error", {}).get("code") in BUSY:
-            time.sleep(int(headers.get("Retry-After") or 5))
+            time.sleep(_wait(headers.get("Retry-After")))
             continue
         if status >= 400 or "error" in data:
             raise RuntimeError(f"Wikidata API {status}: {data.get('error')}")
