@@ -1,6 +1,6 @@
 -- Citation rules and the publish gate. Run: supabase test db
 begin;
-select plan(26);
+select plan(30);
 
 -- Deferred constraint triggers fire at commit, which a test never reaches:
 -- run the statement, then flush the checks, then go back to deferred.
@@ -112,6 +112,8 @@ values ((select id from claim where value = 'Veracruz'), (select id from source 
 select pg_temp.committed('select accept_proposal((select id from proposal where rationale = ''p6''), ''tester'')');
 update creator set do_not_use = true where name = 'Solo Author';
 select is(get_entity('molote'), null, 'an entity left with no credited claim is no longer served');
+select is((select array_agg(c ->> 'slug') from cards() c), array['chavindeca'],
+  'cards() keeps the served entity and leaves out the one that lost its credit');
 select is((select count(*) from search_entities('molote')), 0::bigint, 'nor found by search');
 set local role anon;
 select is((select count(*) from evidence where quote = 'molotes from Veracruz'), 0::bigint,
@@ -128,6 +130,7 @@ select lives_ok(
   'a claim that lost its credit can still take new evidence');
 select pg_temp.committed('select accept_proposal((select id from proposal where rationale = ''p7''), ''tester'')');
 select is(get_entity('molote') #>> '{claims,0,sources,0,publisher}', 'Example Eats', 'and a new credited source brings it back');
+select is((select array_agg(c ->> 'slug') from cards() c), array['chavindeca', 'molote'], 'cards() come in slug order');
 set local role anon;
 select is((select count(*) from alias where text = 'molote'), 1::bigint, 'names and all, over raw REST too');
 reset role;
@@ -146,7 +149,12 @@ insert into proposal (author, rationale) values ('test', 'p2');
 insert into claim (entity_id, predicate, value, proposal_id)
 values ((select id from entity where slug = 'chavindeca'), 'note', 'unreviewed', (select id from proposal where rationale = 'p2'));
 
+insert into entity (slug, kind, name) values ('pozole', 'dish', 'Pozole');
+insert into claim (entity_id, predicate, value, proposal_id)
+values ((select id from entity where slug = 'pozole'), 'originates_in', 'Guerrero', (select id from proposal where rationale = 'p2'));
+select is((select count(*) from cards() c where c ->> 'slug' = 'pozole'), 0::bigint, 'cards() leaves out a proposed entity');
 set local role anon;
+select is((select count(*) from cards()), 2::bigint, 'and anon gets the same served cards through the definer function');
 select is((select count(*) from claim where value = 'unreviewed'), 0::bigint, 'anon cannot see proposed claims');
 select is((select count(*) from source_text), 0::bigint, 'anon cannot read source text');
 reset role;
