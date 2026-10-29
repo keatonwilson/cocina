@@ -1,7 +1,8 @@
 import { redirect } from '@sveltejs/kit';
 
-// A link using the PKCE code (Supabase's default template) lands here: it only works in the
-// browser that asked for it, which holds the code verifier. /auth/confirm works anywhere.
+// A link from Supabase's default template (a PKCE ?code=, passed on by /auth/confirm) lands here.
+// It only works in the browser that asked for it, which holds the code verifier; the repo's
+// template (supabase/templates/sign_in.html) uses /auth/confirm, which works anywhere.
 export async function GET({ url, locals }) {
   const code = url.searchParams.get('code');
   if (code) {

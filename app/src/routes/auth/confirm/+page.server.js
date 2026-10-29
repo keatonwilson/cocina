@@ -13,6 +13,10 @@ const params = (url) => {
 };
 
 export const load = ({ url }) => {
+  // A project still on Supabase's default template sends a PKCE ?code= here: /auth/callback
+  // handles it (in the browser that asked for the link)
+  const code = url.searchParams.get('code');
+  if (code && !url.searchParams.get('token_hash')) redirect(303, `/auth/callback?code=${encodeURIComponent(code)}`);
   const { token_hash, type } = params(url);
   return { usable: Boolean(token_hash && type) };
 };

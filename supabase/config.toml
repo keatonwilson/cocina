@@ -244,6 +244,16 @@ otp_expiry = 3600
 # admin_email = "admin@email.com"
 # sender_name = "Admin"
 
+# The review inbox's sign-in link (app/src/routes/auth/confirm). The hosted project's
+# Magic Link and Confirm signup templates must hold the same body: see CLAUDE.md.
+[auth.email.template.magic_link]
+subject = "Sign in to cocina review"
+content_path = "./supabase/templates/sign_in.html"
+
+[auth.email.template.confirmation]
+subject = "Sign in to cocina review"
+content_path = "./supabase/templates/sign_in.html"
+
 # Uncomment to customize email template
 # [auth.email.template.invite]
 # subject = "You have been invited"
