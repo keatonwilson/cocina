@@ -9,7 +9,8 @@ export const actions = {
     // Links go only to reviewers; everyone gets the same answer, so the form doesn't say who reviews
     if (isReviewer(email, env.REVIEWERS)) {
       const { error } = await locals.supabase.auth.signInWithOtp({
-        email, options: { emailRedirectTo: `${url.origin}/auth/callback` }
+        // The template's {{ .RedirectTo }}: links come back to this deployment's /auth/confirm
+        email, options: { emailRedirectTo: `${url.origin}/auth/confirm` }
       });
       // 429 (a second click inside Supabase's one-minute cooldown, or the hourly email cap): answer as
       // for anyone, so the page never tells reviewers apart, and leave the reason in the server log
