@@ -181,3 +181,19 @@ def test_wikidata_retry_after_is_seconds_capped_at_a_minute():
     assert _wait("Wed, 21 Oct 2026 07:28:00 GMT") == 5   # an HTTP date: don't crash, wait a little
     assert _wait("\xb2") == 5                             # isdigit() would let this through to int()
     assert _wait(None) == 5
+
+
+def test_a_name_that_belongs_to_another_entity_is_a_clash():
+    from cocina.db import fold
+    from cocina.review import name_clash
+    others = {}
+    for slug, names in {"taco-arabe": ["Taco Arabe"], "al-pastor": ["Al Pastor"], "carne-asada": ["Carne asada"],
+                        "flauta": ["Flauta", "taquito"], "birria": ["Birria"]}.items():
+        for n in names:
+            others.setdefault(fold(n), set()).add(slug)
+    assert name_clash("tacos árabes", "Al Pastor", others) == "also the name of taco-arabe"     # plural folded
+    assert name_clash("Taquitos", "Tacos dorados", others) == "also the name of flauta"
+    assert name_clash("tacos al pastor", "Taco", others) == "names a kind of Taco made with al-pastor, not another name for it"
+    assert name_clash("Tacos carne asada", "Taco", others).endswith("made with carne-asada, not another name for it")
+    assert name_clash("red tacos", "Quesabirria", others) is None          # a real other name
+    assert name_clash("birria taco", "Quesabirria", others) is None        # its own name isn't in it

@@ -22,7 +22,10 @@ from typing import Literal
 import anthropic
 from pydantic import BaseModel
 
-from cocina.db import all_rows, client as db, norm
+from functools import partial
+from types import SimpleNamespace
+
+from cocina.db import all_rows, client as db, fold, norm
 from cocina.research import FALLBACK, MODEL, _cost
 
 SELECT = (
@@ -166,10 +169,38 @@ def split(proposals: list[dict], flags: list,
     return [p["id"] for p in proposals if p["id"] in asked and p["id"] not in new], new
 
 
+def name_clash(value: str, own: str, others: dict[str, set[str]]) -> str | None:
+    """Why an also_known_as value can't be another name for this entity, or None.
+    `others`: folded names and aliases of every other entity → their slugs."""
+    v = fold(value)
+    if v in others:   # "tacos árabes" for Al Pastor, when Taco Arabe exists
+        return f"also the name of {', '.join(sorted(others[v]))}"
+    mine = fold(own)
+    if f" {mine} " in f" {v} ":   # "tacos al pastor" for Taco: a kind of taco, named after Al Pastor
+        inside = sorted({slug for n, slugs in others.items()
+                         if len(n) >= 4 and n not in mine and f" {n} " in f" {v} " for slug in slugs})
+        if inside:
+            return f"names a kind of {own} made with {', '.join(inside)}, not another name for it"
+    return None
+
+
+def _all_names() -> dict[str, set[str]]:
+    """Folded names and live aliases of every live entity → slugs."""
+    ents = all_rows(lambda: db().table("entity").select("id, slug, name").in_("status", ["proposed", "published"]).order("id"))
+    slug = {e["id"]: e["slug"] for e in ents}
+    names: dict[str, set[str]] = {}
+    for e in ents:
+        names.setdefault(fold(e["name"]), set()).add(e["slug"])
+    for a in all_rows(lambda: db().table("alias").select("entity_id, text").in_("status", ["proposed", "published"]).order("id")):
+        if a["entity_id"] in slug:
+            names.setdefault(fold(a["text"]), set()).add(slug[a["entity_id"]])
+    return names
+
+
 def _facts(ent: dict, decided: list[dict], proposals: list[dict]) -> str:
     lines = [f"Food: {ent['name']} ({ent['kind']})", "", "Published and rejected facts:"]
     lines += [f"P{c['id']} {c['predicate']} = \"{c['value']}\"" if c["status"] == "published" else
-              f"R{c['id']} {c['predicate']} = \"{c['value']}\" (rejected: {(c['proposal'] or {}).get('reason')})"
+              f"R{c['id']} {c['predicate']} = \"{c['value']}\" ({_why_down(c)})"
               for c in decided] or ["(none)"]
     lines += ["", "Proposed facts:"]
     for p in proposals:
@@ -178,6 +209,11 @@ def _facts(ent: dict, decided: list[dict], proposals: list[dict]) -> str:
         lines.append(f"#{p['id']}{more} {t['predicate']} = \"{t['value']}\"")
         lines += [f"   quote: \"{ev['quote']}\"" for ev in p["evidence"]]
     return "\n".join(lines)
+
+
+def _why_down(c: dict) -> str:
+    """A rejected or retired claim, as auto-review describes it."""
+    return "retired by a reviewer" if c["status"] == "retired" else f"rejected: {(c['proposal'] or {}).get('reason')}"
 
 
 def auto_review(entity: str | None = None) -> None:
@@ -191,7 +227,9 @@ def auto_review(entity: str | None = None) -> None:
             by_entity.setdefault(about(p)["id"], []).append(p)
     # Claims first: a writeup only cites what is already published
     # An entity whose open proposals are all flagged has nothing new to judge (they wait for a human)
-    jobs = [(_auto_claims, about(ps[0]), ps) for ps in by_entity.values() if any(not p.get("flag") for p in ps)]
+    names = _all_names() if by_entity else {}
+    jobs = [(partial(_auto_claims, names=names), about(ps[0]), ps)
+            for ps in by_entity.values() if any(not p.get("flag") for p in ps)]
     jobs += [(_auto_writeup, about(p), [p]) for p in writeups if not p.get("flag")]
     for job, ent, proposals in jobs:
         try:
@@ -246,16 +284,21 @@ def _failed(label: str, cost: float) -> None:
                                   "errors": [{"error": f"{label}: refused or unparsed"}]}).execute()
 
 
-def _auto_claims(ai: anthropic.Anthropic, ent: dict, proposals: list[dict]) -> None:
+def _auto_claims(ai: anthropic.Anthropic, ent: dict, proposals: list[dict], names: dict[str, set[str]]) -> None:
     decided = (db().table("claim").select("id, predicate, value, status, proposal(reason)")
-               .eq("entity_id", ent["id"]).in_("status", ["published", "rejected"]).execute().data)
-    rejected = {(c["predicate"], norm(c["value"])):
-                f"conflict: restates R{c['id']}, rejected: {(c['proposal'] or {}).get('reason')}"
-                for c in decided if c["status"] == "rejected"}
+               .eq("entity_id", ent["id"]).in_("status", ["published", "rejected", "retired"]).execute().data)
+    # A fact a person took down (rejected or retired) never comes back on its own
+    rejected = {(c["predicate"], norm(c["value"])): f"conflict: restates R{c['id']}, {_why_down(c)}"
+                for c in decided if c["status"] != "published"}
+    others = {n: slugs - {ent["slug"]} for n, slugs in names.items() if slugs - {ent["slug"]}}
+    clashes = [SimpleNamespace(proposal=p["id"], kind="conflict", why=why) for p in proposals
+               if (c := (p.get("claim") or [None])[0]) and c["predicate"] == "also_known_as"
+               and (why := name_clash(c["value"], ent["name"], others))]
     out, cost = _check(ai, AUTO_SYSTEM, _facts(ent, decided, proposals), Verdict)
     if out is None:
         return _failed(ent["slug"], cost)
-    _publish(ent["slug"], *split(proposals, out.flags, rejected), cost)
+    # A name that belongs to another entity is flagged whatever the model says (later flags win)
+    _publish(ent["slug"], *split(proposals, [*out.flags, *clashes], rejected), cost)
 
 
 def writeup_text(w: dict, facts: dict[int, dict]) -> str:

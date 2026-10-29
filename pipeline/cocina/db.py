@@ -37,3 +37,9 @@ def all_rows(query, page: int = 1000) -> list[dict]:
         rows += batch
         if len(batch) < page:
             return rows
+
+
+def fold(text: str | None) -> str:
+    """norm() with a plural folded away per word, so "Tacos árabes" and "Taco Arabe" compare equal.
+    ponytail: drops a trailing s only (frijoles → frijole); enough to compare names"""
+    return " ".join(w[:-1] if len(w) > 3 and w.endswith("s") else w for w in norm(text).split())
