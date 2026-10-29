@@ -1,7 +1,7 @@
 <script>
   import { page } from '$app/stores';
 
-  /** @type {{ sent?: string, again?: boolean, email?: string, message?: string } | null} */
+  /** @type {{ sent?: string, email?: string, message?: string } | null} */
   export let form;
 </script>
 
@@ -11,7 +11,7 @@
   <h1>cocina review</h1>
   {#if form?.sent}
     <p>If {form.sent} is a reviewer, a sign-in link is on its way. Open it in this browser.</p>
-    {#if form.again}<p class="note">One was sent in the last minute: check your inbox and spam before asking again.</p>{/if}
+    <p class="note">It can take a few minutes; check spam too. Ask again only after a minute.</p>
   {:else}
     {#if $page.url.searchParams.has('failed')}
       <p class="error">That link didn't work or has expired. Ask for a new one.</p>
