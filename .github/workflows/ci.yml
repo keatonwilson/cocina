@@ -57,7 +57,7 @@ jobs:
           MCP_TOKEN: ci
         run: |
           pnpm preview --host 127.0.0.1 --port 4173 --strictPort &
-          until curl -s -o /dev/null http://127.0.0.1:4173/login; do sleep 1; done
+          curl -s -o /dev/null --retry 30 --retry-connrefused --retry-delay 1 http://127.0.0.1:4173/login   # up within 30 s, or fail
           test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:4173/login)" = 200
           test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:4173/review)" = 303
           curl -sf -X POST http://127.0.0.1:4173/mcp -H 'Authorization: Bearer ci' -H 'Content-Type: application/json' \
