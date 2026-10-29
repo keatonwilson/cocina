@@ -178,11 +178,11 @@ def name_clash(value: str, own: str, others: dict[str, set[str]], family: bool =
     if v in others:   # "tacos árabes" for Al Pastor, when Taco Arabe exists
         return f"also the name of {', '.join(sorted(others[v]))}"
     mine = fold(own)
-    if family and f" {mine} " in f" {v} ":   # "tacos al pastor" for Taco: a kind of taco, named after Al Pastor
+    # "tacos al pastor" or "fish tacos" for Taco: a kind of taco, not another name for one ("Tacos" is fine)
+    if family and v != mine and f" {mine} " in f" {v} ":
         inside = sorted({slug for n, slugs in others.items()
                          if len(n) >= 4 and n not in mine and f" {n} " in f" {v} " for slug in slugs})
-        if inside:
-            return f"names a kind of {own} made with {', '.join(inside)}, not another name for it"
+        return f"names a kind of {own}" + (f" made with {', '.join(inside)}" if inside else "") + ", not another name for it"
     return None
 
 

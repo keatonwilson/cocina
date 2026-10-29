@@ -195,6 +195,8 @@ def test_a_name_that_belongs_to_another_entity_is_a_clash():
     assert name_clash("Taquitos", "Tacos dorados", others) == "also the name of flauta"
     assert name_clash("tacos al pastor", "Taco", others, family=True) == "names a kind of Taco made with al-pastor, not another name for it"
     assert name_clash("Tacos carne asada", "Taco", others, family=True).endswith("made with carne-asada, not another name for it")
+    assert name_clash("fish tacos", "Taco", others, family=True) == "names a kind of Taco, not another name for it"
+    assert name_clash("Tacos", "Taco", others, family=True) is None        # just the plural
     others.setdefault("taco", set()).add("taco")
     assert name_clash("tacos al pastor", "Al Pastor", others) is None      # a fine name for Al Pastor itself
     assert name_clash("red tacos", "Quesabirria", others) is None          # a real other name
