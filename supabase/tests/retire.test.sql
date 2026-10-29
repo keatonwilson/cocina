@@ -1,6 +1,6 @@
 -- Retiring published claims, and the entity that loses its last one. Run: supabase test db
 begin;
-select plan(13);
+select plan(15);
 
 create function pg_temp.committed(sql text) returns void language plpgsql as $$
 begin
@@ -68,6 +68,9 @@ select is((select count(*) from search_entities('tacos al pastor') where slug = 
   'and search no longer finds it by that name');
 
 -- Retiring a duplicate's last claim retires the entity, its names and writeup; its name moves to the survivor
+insert into proposal (author, rationale) values ('test', 'pending-on-twin');
+insert into claim (entity_id, predicate, value, proposal_id)
+values ((select id from entity where slug = 'gringas'), 'uses', 'cheese', (select id from proposal where rationale = 'pending-on-twin'));
 insert into proposal (op, author, rationale, retires)
 values ('retire', 'tester', 'r-twin', array[(select id from claim where value = 'al pastor')]);
 insert into alias (entity_id, text, proposal_id)
@@ -78,6 +81,14 @@ select lives_ok(
 select is((select status::text from entity where slug = 'gringas'), 'retired', 'the entity is retired with it');
 select is((select count(*) from cards() c where c ->> 'slug' = 'gringas'), 0::bigint, 'and leaves every read');
 select is(get_entity('gringa') -> 'aliases', '["Gringas"]'::jsonb, 'its name now finds the survivor');
+select is((select status from proposal where rationale = 'pending-on-twin'), 'rejected',
+  'its open proposals are rejected with it');
+insert into proposal (author, rationale) values ('test', 'late-add');
+insert into claim (entity_id, predicate, value, proposal_id)
+values ((select id from entity where slug = 'gringas'), 'uses', 'pineapple', (select id from proposal where rationale = 'late-add'));
+select throws_like(
+  $$ select accept_proposal((select id from proposal where rationale = 'late-add'), 'tester') $$,
+  '%about a retired entity%', 'and nothing new publishes onto it');
 
 select * from finish();
 rollback;

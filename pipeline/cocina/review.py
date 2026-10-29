@@ -169,14 +169,16 @@ def split(proposals: list[dict], flags: list,
     return [p["id"] for p in proposals if p["id"] in asked and p["id"] not in new], new
 
 
-def name_clash(value: str, own: str, others: dict[str, set[str]]) -> str | None:
+def name_clash(value: str, own: str, others: dict[str, set[str]], family: bool = False) -> str | None:
     """Why an also_known_as value can't be another name for this entity, or None.
-    `others`: folded names and aliases of every other entity → their slugs."""
+    `others`: folded names and aliases of every other entity → their slugs. `family`: the
+    entity is a generic menu category (Taco, Burro), whose "kind of" names are the trap;
+    "tacos al pastor" is a fine name for Al Pastor, not for Taco."""
     v = fold(value)
     if v in others:   # "tacos árabes" for Al Pastor, when Taco Arabe exists
         return f"also the name of {', '.join(sorted(others[v]))}"
     mine = fold(own)
-    if f" {mine} " in f" {v} ":   # "tacos al pastor" for Taco: a kind of taco, named after Al Pastor
+    if family and f" {mine} " in f" {v} ":   # "tacos al pastor" for Taco: a kind of taco, named after Al Pastor
         inside = sorted({slug for n, slugs in others.items()
                          if len(n) >= 4 and n not in mine and f" {n} " in f" {v} " for slug in slugs})
         if inside:
@@ -293,7 +295,7 @@ def _auto_claims(ai: anthropic.Anthropic, ent: dict, proposals: list[dict], name
     others = {n: slugs - {ent["slug"]} for n, slugs in names.items() if slugs - {ent["slug"]}}
     clashes = [SimpleNamespace(proposal=p["id"], kind="conflict", why=why) for p in proposals
                if (c := (p.get("claim") or [None])[0]) and c["predicate"] == "also_known_as"
-               and (why := name_clash(c["value"], ent["name"], others))]
+               and (why := name_clash(c["value"], ent["name"], others, family=ent["kind"] == "menu_category"))]
     out, cost = _check(ai, AUTO_SYSTEM, _facts(ent, decided, proposals), Verdict)
     if out is None:
         return _failed(ent["slug"], cost)
