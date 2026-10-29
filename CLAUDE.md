@@ -20,8 +20,9 @@ cocina is a curated knowledgebase of Mexican food concepts (dishes, salsas, chil
 - `python -m cocina.research <slug>...` – search → fetch → extract → quote check → proposals (~$0.15–0.25 and ~30 s per entity)
 - `python -m cocina.wikidata <slug>... | --all` – English/Spanish labels and aliases of the one Wikidata food item named exactly like the entity, proposed as `also_known_as` claims (source: Wikidata, CC0); free
 - `python -m cocina.write <slug>... | --all` – a writeup (2–4 cited sentences) from an entity's published claims; `--all` = served entities with no live writeup (~$0.02 each)
-- `python -m cocina.review --auto [--entity slug]` – after research or write: Claude flags conflicting or unsupported proposals (`proposal.flag`), `accept_proposal` publishes the rest as `auto-review` (~$0.02 per entity)
+- `python -m cocina.review --auto [--entity slug]` – after research or write: Claude flags conflicting or unsupported proposals (`proposal.flag`), `accept_proposal` publishes the rest as `auto-review` (~$0.02 per entity). Checked in code whatever the model says: a fact a person rejected or retired, and an `also_known_as` that is another entity's name or a kind of this one named after another (`name_clash`, plurals folded)
 - `python -m cocina.review [--entity slug] [--kind dish]` – a human decides what's still open, flag shown
+- `python -m cocina.retire <claim id>... | --entity slug [--into slug] --why "…"` – a person takes published claims down (shows them, asks first). `--entity` retires the entity with its last claim; `--into` gives its name to a survivor as a search hint (duplicates)
 - `python -m cocina.snapshot [--release]` – `snapshots/kb-YYYY.MM.DD.jsonl`, optionally a GitHub release (a second one that day is tagged `.2`)
 
 ## Data model (and why)
@@ -43,7 +44,7 @@ Deferred constraint triggers check at commit, so a whole proposal is judged at o
 - an alias with a `claim_id` is published only with its claim
 - a published writeup's every sentence cites at least one claim, and each cited claim is its entity's own, published and still credited (`sentences_ok`); `card()` and RLS hide a writeup once a cited claim loses its credit
 
-`accept_proposal(id, reviewer)` is the one gate: it publishes the proposal's rows (plus a seeded entity and its name hints on its first accepted claim) and retires what a `change` supersedes. `retire`/`merge` ops aren't implemented yet (phase 2/3). `reject_proposal(id, reviewer, reason)` stores the reason for the agent. Both are service-role only.
+`accept_proposal(id, reviewer)` is the one gate: it publishes the proposal's rows (plus a seeded entity and its name hints on its first accepted claim) and retires what a `change` supersedes. `retire` (proposal.`retires` = claim ids, migration 005) takes claims and the aliases they back down, and an entity left with none goes too, with its names and writeup; nothing is deleted. `merge` isn't implemented (retire `--into` covers duplicates). `reject_proposal(id, reviewer, reason)` stores the reason for the agent. Both are service-role only.
 
 ## Reads (published only, whoever calls)
 
