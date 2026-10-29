@@ -62,7 +62,7 @@ Reads such as `cards()`, `get_entity()` and the anonymous REST API return publis
 
 ## Running it
 
-You need Python 3.12, Node 22+ with pnpm, the Supabase CLI and Docker. Copy `.env.example` to `.env`; the pipeline (`pipeline/.env`) and the app share it.
+You need Python 3.12, Node 24 (what CI runs) with pnpm, the Supabase CLI and Docker. Copy `.env.example` to `.env`; the pipeline (`pipeline/.env`) and the app share it.
 
 ```sh
 supabase start                                    # local Postgres + REST, migrations applied
@@ -75,7 +75,7 @@ cd ../app && pnpm install
 | `python -m cocina.seed [--add KIND NAME]` | Proposed entities from cartoTaco, or one by hand |
 | `python -m cocina.research <slug>…` | Search, fetch, extract and quote-check, then write proposals (about $0.17 an entity) |
 | `python -m cocina.wikidata <slug>… \| --all` | Other English and Spanish names from Wikidata (CC0) |
-| `python -m cocina.write <slug>… \| --all` | Cited writeups from published claims (about $0.004 each) |
+| `python -m cocina.write <slug>… \| --all` | Cited writeups from published claims (about $0.005 each, plus about $0.002 to auto-review) |
 | `python -m cocina.review --auto` | Publishes uncontested proposals and flags the rest |
 | `python -m cocina.review` | A person decides what's open, in the terminal |
 | `python -m cocina.retire <ids> \| --entity slug [--into slug] --why …` | Takes published claims, or a duplicate entity, down |
