@@ -1,7 +1,7 @@
 <script>
   import { page } from '$app/stores';
 
-  /** @type {{ sent?: string, email?: string, message?: string } | null} */
+  /** @type {{ sent?: string, again?: boolean, email?: string, message?: string } | null} */
   export let form;
 </script>
 
@@ -11,6 +11,7 @@
   <h1>cocina review</h1>
   {#if form?.sent}
     <p>If {form.sent} is a reviewer, a sign-in link is on its way. Open it in this browser.</p>
+    {#if form.again}<p class="note">One was sent in the last minute: check your inbox and spam before asking again.</p>{/if}
   {:else}
     {#if $page.url.searchParams.has('failed')}
       <p class="error">That link didn't work or has expired. Ask for a new one.</p>
@@ -29,4 +30,5 @@
   form { display: grid; gap: 8px; }
   input, button { font: inherit; padding: 8px 10px; }
   .error { color: #b3261e; }
+  .note { color: #6b665f; }
 </style>

@@ -11,6 +11,8 @@ export const actions = {
       const { error } = await locals.supabase.auth.signInWithOtp({
         email, options: { emailRedirectTo: `${url.origin}/auth/callback` }
       });
+      // 429: Supabase's once-a-minute cooldown, i.e. a link already went out (a second click)
+      if (error?.status === 429) return { sent: email, again: true };
       if (error) return fail(502, { email, message: `Couldn't send the link: ${error.message}` });
     }
     return { sent: email };
