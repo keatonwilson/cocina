@@ -1,6 +1,7 @@
 import { redirect } from '@sveltejs/kit';
 
-// The magic link lands here with a code; trade it for a session cookie
+// A link using the PKCE code (Supabase's default template) lands here: it only works in the
+// browser that asked for it, which holds the code verifier. /auth/confirm works anywhere.
 export async function GET({ url, locals }) {
   const code = url.searchParams.get('code');
   if (code) {
