@@ -47,3 +47,18 @@ jobs:
       - run: pnpm install --frozen-lockfile
       - run: pnpm check
       - run: pnpm test
+      # Build and load the pages for real: dev mode hid a server-render crash once
+      # (SvelteKit's runes on Svelte 4). Placeholder env: nothing here calls Supabase.
+      - run: pnpm build
+      - name: Smoke-test the built app
+        env:
+          COCINA_SUPABASE_URL: http://127.0.0.1:9
+          COCINA_SUPABASE_ANON_KEY: placeholder
+          MCP_TOKEN: ci
+        run: |
+          pnpm preview --host 127.0.0.1 --port 4173 --strictPort &
+          until curl -s -o /dev/null http://127.0.0.1:4173/login; do sleep 1; done
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:4173/login)" = 200
+          test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:4173/review)" = 303
+          curl -sf -X POST http://127.0.0.1:4173/mcp -H 'Authorization: Bearer ci' -H 'Content-Type: application/json' \
+            -H 'Accept: application/json, text/event-stream' -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | grep -q '"get_entity"'
