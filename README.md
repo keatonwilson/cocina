@@ -29,11 +29,11 @@ flowchart LR
    - cocina fetches them itself. It respects `robots.txt` and `noai` opt-outs.
    - Claude then extracts claims, each with an exact quote.
    - A claim is dropped unless its quote appears word for word on the page that was fetched.
-3. **Auto-review.** Claude checks each entity's proposals against its published facts and against each other. It flags a proposal whose quote doesn't actually state it, or that contradicts another fact. Code also flags, whatever the model says:
+3. **Auto-review.** Claude checks each entity's proposals against its published facts and against each other. It flags a proposal whose quote doesn't actually state it, or that contradicts another fact. Code also catches, whatever the model says:
    - a fact a person rejected or retired, if research proposes it again;
    - a name that belongs to another entry.
 
-   Everything unflagged is published. On the first full run, about 1 proposal in 8 was flagged.
+   A quote that plainly doesn't state its claim (it says something else, or the reverse) is rejected outright, as is a restated rejected fact or a "kind of taco" name; conflicts between sources and judgement calls are flagged for a person; everything else is published.
 4. **People** decide what's flagged, in the web inbox (`/review`) or the terminal, and can retire anything already published.
 5. **Writeups.**
    - Claude writes 2–4 sentences from an entity's published claims only.

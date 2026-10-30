@@ -103,9 +103,29 @@ def test_auto_review_accepts_only_what_it_was_asked_about_and_did_not_flag():
              Flag(proposal=3, kind="unsupported", why="re-flagged"),
              Flag(proposal=99, kind="unsupported", why="an id we never sent")]
     rejected = {("uses", "tortilla de maiz"): "conflict: restates R7"}   # the model missed this one
-    accept, new = split(proposals, flags, rejected)
+    accept, flag, reject = split(proposals, flags, rejected)
     assert accept == [1, 5]                               # 3 still waits for a human
-    assert new == {2: "conflict: corn vs flour (P9)", 4: "conflict: restates R7"}  # 99 ignored
+    assert flag == {2: "conflict: corn vs flour (P9)"}    # 99 ignored
+    assert reject == {4: "conflict: restates R7"}         # a person already said no
+
+
+def test_auto_review_rejects_only_the_clear_cut_and_recheck_never_accepts():
+    from types import SimpleNamespace as Flag
+
+    from cocina.review import split
+    claim = lambda value: [{"predicate": "variant_of", "value": value}]  # noqa: E731
+    proposals = [{"id": 1, "claim": claim("barbacoa")}, {"id": 2, "claim": claim("fajita")},
+                 {"id": 3, "claim": claim("pozole")}, {"id": 4, "claim": claim("mole"), "flag": "unsupported: old"},
+                 {"id": 5, "claim": claim("tinga"), "flag": "conflict: old"}]
+    flags = [Flag(proposal=1, kind="unsupported", why="the quote says the reverse", sure=True),
+             Flag(proposal=2, kind="unsupported", why="it nearly says so", sure=False),
+             Flag(proposal=3, kind="conflict", why="two origins", sure=True),           # conflicts: a person
+             Flag(proposal=4, kind="unsupported", why="about another food", sure=True)]
+    accept, flag, reject = split(proposals, flags, {})
+    assert (accept, sorted(flag), sorted(reject)) == ([], [2, 3], [1])                 # 4, 5: already flagged
+    accept, flag, reject = split(proposals, flags, {}, recheck=True)
+    assert sorted(reject) == [1, 4] and sorted(flag) == [2, 3]
+    assert accept == []                                    # 5 wasn't re-flagged, but recheck never accepts it
 
 
 def test_a_writeup_must_cite_its_card_and_not_copy_its_quotes():

@@ -4,9 +4,10 @@
     python -m cocina.review [--entity chavindeca] [--kind dish]
 
 --auto: Claude checks each entity's open proposals against its published facts and
-each other. A proposal whose quotes don't state it, or that can't be true alongside
-another fact, is flagged for a human; the rest go through accept_proposal, so the
-citation rules still decide. A writeup (cocina.write) is checked sentence by sentence
+each other. A proposal whose quotes clearly don't state it is rejected; one that can't be
+true alongside another fact, or is a judgement call, is flagged for a human; the rest go
+through accept_proposal, so the citation rules still decide. --recheck re-judges what is
+already flagged (it can reject, never accept). A writeup (cocina.write) is checked sentence by sentence
 against the claims it cites. Articles (phase 3) stay human-only.
 
 In the terminal: a accept · r reject (asks why) · s skip · o open the sources · q quit
@@ -121,6 +122,11 @@ true at once (several ingredients, regional variants, a second name, a place ins
 such as Mexico City and Mexico) are not conflicts. Flag every proposal on each side of a conflict. A \
 proposal that restates a rejected fact conflicts with it.
 
+For an unsupported proposal, set `sure` true only when anyone reading the quote would agree it \
+doesn't state the fact: it says something else, says the reverse, or is about a different food. \
+Those are rejected without a person. Set it false when it's a judgement call: the quote nearly \
+says it, or it depends on how it is read. Every other flag, conflicts included, waits for a person.
+
 Flag nothing else; everything you don't flag is published. `why` is one sentence naming the other \
 facts (#id, P id or R id) involved."""
 
@@ -129,6 +135,7 @@ class Flag(BaseModel):
     proposal: int
     kind: Literal["unsupported", "conflict"]
     why: str
+    sure: bool
 
 
 class Verdict(BaseModel):
@@ -154,19 +161,35 @@ class WriteupCheck(BaseModel):
     problems: list[Problem]
 
 
-def split(proposals: list[dict], flags: list,
-          rejected: dict[tuple[str, str], str]) -> tuple[list[int], dict[int, str]]:
-    """(proposals to accept, {proposal: flag}). A new claim restating a rejected fact
-    (rejected: (predicate, norm(value)) → flag) is flagged whatever the model says; an
-    already-flagged proposal waits for a human either way; a flag naming an id we didn't
-    send is ignored."""
-    asked = {p["id"] for p in proposals if not p.get("flag")}
-    new = {f.proposal: f"{f.kind}: {f.why}" for f in flags if f.proposal in asked}
+def split(proposals: list[dict], flags: list, rejected: dict[tuple[str, str], str],
+          recheck: bool = False) -> tuple[list[int], dict[int, str], dict[int, str]]:
+    """(accept, {proposal: flag for a person}, {proposal: reason to reject it}).
+
+    Rejected without a person: an unsupported proposal the model is sure of, a code flag
+    marked clear (a "kind of taco" name), and a new claim restating a fact a person rejected
+    or retired (rejected: (predicate, norm(value)) → reason), whatever the model says. Every
+    other flag waits for a person, conflicts always. A flag naming an id we didn't send is
+    ignored. recheck: judge already-flagged proposals too, but never accept one; unless it
+    can be rejected, a person still decides it."""
+    was_flagged = {p["id"] for p in proposals if p.get("flag")}
+    asked = {p["id"] for p in proposals} - (set() if recheck else was_flagged)
+    flag: dict[int, str] = {}
+    reject: dict[int, str] = {}
+    for f in flags:   # later entries win: code flags come after the model's
+        if f.proposal not in asked:
+            continue
+        clear = getattr(f, "clear", False) or (f.kind == "unsupported" and getattr(f, "sure", False))
+        flag.pop(f.proposal, None)
+        reject.pop(f.proposal, None)
+        (reject if clear else flag)[f.proposal] = f"{f.kind}: {f.why}"
     for p in proposals:
         c = (p.get("claim") or [None])[0]
         if p["id"] in asked and c and (c["predicate"], norm(c["value"])) in rejected:
-            new[p["id"]] = rejected[(c["predicate"], norm(c["value"]))]
-    return [p["id"] for p in proposals if p["id"] in asked and p["id"] not in new], new
+            flag.pop(p["id"], None)
+            reject[p["id"]] = rejected[(c["predicate"], norm(c["value"]))]
+    accept = [p["id"] for p in proposals
+              if p["id"] in asked - was_flagged and p["id"] not in flag and p["id"] not in reject]
+    return accept, flag, reject
 
 
 def name_clash(value: str, own: str, others: dict[str, set[str]], family: bool = False) -> str | None:
@@ -218,7 +241,9 @@ def _why_down(c: dict) -> str:
     return "retired by a reviewer" if c["status"] == "retired" else f"rejected: {(c['proposal'] or {}).get('reason')}"
 
 
-def auto_review(entity: str | None = None) -> None:
+def auto_review(entity: str | None = None, recheck: bool = False) -> None:
+    """recheck: also re-judge claim proposals already flagged, rejecting the clear-cut ones
+    (it never accepts a flagged proposal)."""
     ai = anthropic.Anthropic(timeout=600, max_retries=1)
     by_entity: dict[int, list[dict]] = {}
     writeups = []
@@ -230,8 +255,8 @@ def auto_review(entity: str | None = None) -> None:
     # Claims first: a writeup only cites what is already published
     # An entity whose open proposals are all flagged has nothing new to judge (they wait for a human)
     names = _all_names() if by_entity else {}
-    jobs = [(partial(_auto_claims, names=names), about(ps[0]), ps)
-            for ps in by_entity.values() if any(not p.get("flag") for p in ps)]
+    jobs = [(partial(_auto_claims, names=names, recheck=recheck), about(ps[0]), ps)
+            for ps in by_entity.values() if recheck or any(not p.get("flag") for p in ps)]
     jobs += [(_auto_writeup, about(p), [p]) for p in writeups if not p.get("flag")]
     for job, ent, proposals in jobs:
         try:
@@ -259,8 +284,12 @@ def _check(ai: anthropic.Anthropic, system: str, content: str, schema) -> tuple[
     return (resp.parsed_output if ok else None), round(_cost(resp.usage), 4)
 
 
-def _publish(label: str, accept: list[int], flags: dict[int, str], cost: float) -> None:
-    """Store the flags, accept the rest through the gate, log the run."""
+def _publish(label: str, accept: list[int], flags: dict[int, str], cost: float,
+             reject: dict[int, str] | None = None) -> None:
+    """Reject what is clearly wrong, store the flags, accept the rest through the gate, log the run."""
+    reject = reject or {}
+    for pid, why in reject.items():   # the reason goes back to the agent, and blocks the fact returning
+        db().rpc("reject_proposal", {"p_id": pid, "p_reviewer": "auto-review", "p_reason": why}).execute()
     for pid, why in flags.items():
         db().table("proposal").update({"flag": why}).eq("id", pid).execute()
     refused = []
@@ -272,7 +301,7 @@ def _publish(label: str, accept: list[int], flags: dict[int, str], cost: float) 
     db().table("run_log").insert({"agent": "auto-review", "cost_usd": cost,
                                   "proposals": len(accept) - len(refused),
                                   "errors": [{"refused": r} for r in refused]}).execute()
-    print(f"{label}: {len(accept) - len(refused)} accepted, {len(flags)} flagged for you, "
+    print(f"{label}: {len(accept) - len(refused)} accepted, {len(reject)} rejected, {len(flags)} flagged for you, "
           f"{len(refused)} refused · ${cost:.3f}")
     for pid, why in flags.items():
         print(f"  #{pid} {why}")
@@ -286,21 +315,25 @@ def _failed(label: str, cost: float) -> None:
                                   "errors": [{"error": f"{label}: refused or unparsed"}]}).execute()
 
 
-def _auto_claims(ai: anthropic.Anthropic, ent: dict, proposals: list[dict], names: dict[str, set[str]]) -> None:
+def _auto_claims(ai: anthropic.Anthropic, ent: dict, proposals: list[dict], names: dict[str, set[str]],
+                 recheck: bool = False) -> None:
     decided = (db().table("claim").select("id, predicate, value, status, proposal(reason)")
                .eq("entity_id", ent["id"]).in_("status", ["published", "rejected", "retired"]).execute().data)
     # A fact a person took down (rejected or retired) never comes back on its own
     rejected = {(c["predicate"], norm(c["value"])): f"conflict: restates R{c['id']}, {_why_down(c)}"
                 for c in decided if c["status"] != "published"}
     others = {n: slugs - {ent["slug"]} for n, slugs in names.items() if slugs - {ent["slug"]}}
-    clashes = [SimpleNamespace(proposal=p["id"], kind="conflict", why=why) for p in proposals
+    # A "kind of taco" name is clearly not another name; a name another entity uses may be shared: a person decides
+    clashes = [SimpleNamespace(proposal=p["id"], kind="conflict", why=why, clear=why.startswith("names a kind of"))
+               for p in proposals
                if (c := (p.get("claim") or [None])[0]) and c["predicate"] == "also_known_as"
                and (why := name_clash(c["value"], ent["name"], others, family=ent["kind"] == "menu_category"))]
     out, cost = _check(ai, AUTO_SYSTEM, _facts(ent, decided, proposals), Verdict)
     if out is None:
         return _failed(ent["slug"], cost)
     # A name that belongs to another entity is flagged whatever the model says (later flags win)
-    _publish(ent["slug"], *split(proposals, [*out.flags, *clashes], rejected), cost)
+    accept, flags, reject = split(proposals, [*out.flags, *clashes], rejected, recheck)
+    _publish(ent["slug"], accept, flags, cost, reject)
 
 
 def writeup_text(w: dict, facts: dict[int, dict]) -> str:
@@ -374,5 +407,6 @@ if __name__ == "__main__":
     ap.add_argument("--entity")
     ap.add_argument("--kind")
     ap.add_argument("--auto", action="store_true", help="publish uncontested proposals, flag the rest")
+    ap.add_argument("--recheck", action="store_true", help="with --auto: re-judge flagged claims, rejecting clear-cut ones")
     a = ap.parse_args()
-    auto_review(a.entity) if a.auto else review(a.entity, a.kind)
+    auto_review(a.entity, a.recheck) if a.auto else review(a.entity, a.kind)
