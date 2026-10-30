@@ -48,6 +48,9 @@ the food distinct ("two corn tortillas"). Keep Spanish food names as they are.
 - When several pages state the same fact, use the identical `value` for each, so the claims merge.
 - `object_name`: for predicates that point at another food, place or technique (uses, variant_of, \
 served_with, originates_in, dried_form_of, used_for, part_of), that thing's plain name. Otherwise null.
+- variant_of points from the narrower food to the broader one: a chavindeca is a variant_of sincronizada, \
+never the reverse. Only claim it when the page says this food is a kind or variant of the other.
+- A cook's own substitution ("I use flank steak instead") is not a fact about the dish: skip it.
 - Skip recipe quantities and step-by-step methods, prices, and anything about one particular restaurant.
 - For each page give its title, the people credited as authors (an empty list if none), the publisher \
 (site or organisation name) and the publication date if the page states one (YYYY-MM-DD)."""

@@ -15,6 +15,7 @@ In the terminal: a accept · r reject (asks why) · s skip · o open the sources
 
 import argparse
 import getpass
+import re
 from urllib.parse import urlsplit
 import os
 import webbrowser
@@ -122,10 +123,12 @@ true at once (several ingredients, regional variants, a second name, a place ins
 such as Mexico City and Mexico) are not conflicts. Flag every proposal on each side of a conflict. A \
 proposal that restates a rejected fact conflicts with it.
 
-For an unsupported proposal, set `sure` true only when anyone reading the quote would agree it \
-doesn't state the fact: it says something else, says the reverse, or is about a different food. \
-Those are rejected without a person. Set it false when it's a judgement call: the quote nearly \
-says it, or it depends on how it is read. Every other flag, conflicts included, waits for a person.
+For an unsupported proposal, set `borderline` true only when a careful editor could reasonably \
+read the quote as stating the fact. A quote that says the reverse (X is a variant of Y, for "Y is \
+a variant of X"), states only part of the fact, is about another food, or is one cook's choice \
+(a substitution) rather than a fact about the dish is not borderline: those are rejected without \
+a person. Every borderline flag, and every conflict, waits for a person. Never output a flag for \
+a proposal you find acceptable.
 
 Flag nothing else; everything you don't flag is published. `why` is one sentence naming the other \
 facts (#id, P id or R id) involved."""
@@ -135,7 +138,7 @@ class Flag(BaseModel):
     proposal: int
     kind: Literal["unsupported", "conflict"]
     why: str
-    sure: bool
+    borderline: bool
 
 
 class Verdict(BaseModel):
@@ -161,24 +164,30 @@ class WriteupCheck(BaseModel):
     problems: list[Problem]
 
 
+# ponytail: wording an early prompt let through as flags; the prompt now forbids them
+NOT_A_FLAG = re.compile(r"\bnot flagged\b|\bno conflict\b|\bactually (?:it )?matches\b|\bis consistent\b|"
+                        r"\bare compatible\b|\bis compatible\b", re.I)
+
+
 def split(proposals: list[dict], flags: list, rejected: dict[tuple[str, str], str],
           recheck: bool = False) -> tuple[list[int], dict[int, str], dict[int, str]]:
     """(accept, {proposal: flag for a person}, {proposal: reason to reject it}).
 
-    Rejected without a person: an unsupported proposal the model is sure of, a code flag
+    Rejected without a person: an unsupported proposal the model calls not borderline, a code flag
     marked clear (a "kind of taco" name), and a new claim restating a fact a person rejected
     or retired (rejected: (predicate, norm(value)) → reason), whatever the model says. Every
     other flag waits for a person, conflicts always. A flag naming an id we didn't send is
     ignored. recheck: judge already-flagged proposals too, but never accept one; unless it
-    can be rejected, a person still decides it."""
-    was_flagged = {p["id"] for p in proposals if p.get("flag")}
+    can be rejected, a person still decides it. A flag whose own words say nothing is wrong
+    ("not flagged", "no conflict") was never a flag: recheck judges it afresh."""
+    was_flagged = {p["id"] for p in proposals if p.get("flag") and not (recheck and NOT_A_FLAG.search(p["flag"]))}
     asked = {p["id"] for p in proposals} - (set() if recheck else was_flagged)
     flag: dict[int, str] = {}
     reject: dict[int, str] = {}
     for f in flags:   # later entries win: code flags come after the model's
         if f.proposal not in asked:
             continue
-        clear = getattr(f, "clear", False) or (f.kind == "unsupported" and getattr(f, "sure", False))
+        clear = getattr(f, "clear", False) or (f.kind == "unsupported" and not getattr(f, "borderline", True))
         flag.pop(f.proposal, None)
         reject.pop(f.proposal, None)
         (reject if clear else flag)[f.proposal] = f"{f.kind}: {f.why}"
