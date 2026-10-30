@@ -221,3 +221,12 @@ def test_a_name_that_belongs_to_another_entity_is_a_clash():
     assert name_clash("tacos al pastor", "Al Pastor", others) is None      # a fine name for Al Pastor itself
     assert name_clash("red tacos", "Quesabirria", others) is None          # a real other name
     assert name_clash("birria taco", "Quesabirria", others) is None        # its own name isn't in it
+
+
+def test_only_a_persons_decision_blocks_a_fact_from_returning():
+    from cocina.review import taken_down
+    decided = [{"id": 1, "status": "rejected", "proposal": {"decided_by": "keatonwilson", "reason": "wrong"}},
+               {"id": 2, "status": "rejected", "proposal": {"decided_by": "auto-review", "reason": "quote says the reverse"}},
+               {"id": 3, "status": "retired", "proposal": {"decided_by": "auto-review"}},     # retired: always a person
+               {"id": 4, "status": "published", "proposal": {"decided_by": "auto-review"}}]
+    assert [c["id"] for c in taken_down(decided)] == [1, 3]

@@ -236,6 +236,14 @@ def _facts(ent: dict, decided: list[dict], proposals: list[dict]) -> str:
     return "\n".join(lines)
 
 
+def taken_down(decided: list[dict]) -> list[dict]:
+    """The claims a person took down: retired, or rejected by someone other than auto-review.
+    Auto-review's own rejections were about one quote, not the fact, so a later proposal of
+    the same fact (with a better quote) is judged afresh rather than blocked."""
+    return [c for c in decided if c["status"] == "retired"
+            or (c["status"] == "rejected" and (c["proposal"] or {}).get("decided_by") != "auto-review")]
+
+
 def _why_down(c: dict) -> str:
     """A rejected or retired claim, as auto-review describes it."""
     return "retired by a reviewer" if c["status"] == "retired" else f"rejected: {(c['proposal'] or {}).get('reason')}"
@@ -317,11 +325,12 @@ def _failed(label: str, cost: float) -> None:
 
 def _auto_claims(ai: anthropic.Anthropic, ent: dict, proposals: list[dict], names: dict[str, set[str]],
                  recheck: bool = False) -> None:
-    decided = (db().table("claim").select("id, predicate, value, status, proposal(reason)")
+    decided = (db().table("claim").select("id, predicate, value, status, proposal(reason, decided_by)")
                .eq("entity_id", ent["id"]).in_("status", ["published", "rejected", "retired"]).execute().data)
     # A fact a person took down (rejected or retired) never comes back on its own
-    rejected = {(c["predicate"], norm(c["value"])): f"conflict: restates R{c['id']}, {_why_down(c)}"
-                for c in decided if c["status"] != "published"}
+    down = taken_down(decided)
+    rejected = {(c["predicate"], norm(c["value"])): f"conflict: restates R{c['id']}, {_why_down(c)}" for c in down}
+    decided = [c for c in decided if c["status"] == "published" or c in down]   # what the model sees as R
     others = {n: slugs - {ent["slug"]} for n, slugs in names.items() if slugs - {ent["slug"]}}
     # A "kind of taco" name is clearly not another name; a name another entity uses may be shared: a person decides
     clashes = [SimpleNamespace(proposal=p["id"], kind="conflict", why=why, clear=why.startswith("names a kind of"))
