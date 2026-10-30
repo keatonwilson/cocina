@@ -1,4 +1,4 @@
-# Plan: cocina, a culinary knowledgebase (phase 1 in detail, phases 2–4 as milestones)
+# Plan: cocina, a culinary knowledgebase (phase 1 as planned, phase 2 as built, phase 3 next)
 
 ## Context
 
@@ -106,25 +106,86 @@ RLS: anon reads published rows, plus `source` and `creator`. `proposal`, `run_lo
   - `concierge.test.js` covers routing with the fake models.
 - Docs: `CLAUDE.md` and a "Knowledgebase (#92)" section in `docs/AI_CONCIERGE_PLAN.md`.
 
-## Phases 2–4 (milestones)
+## Status (2026-10-30)
 
-- **Phase 2, Curation.**
-  - SvelteKit review inbox and entity page in `app/` (Supabase auth), with the same `accept_proposal` underneath, batch accept for 2+ independent sources, and creator pages.
-  - Citation checker as a pipeline step: quote present, plus the overlap threshold (8 words / 15%; still to decide).
-  - Wikidata import (CC0 labels, aliases, subclass claims).
-  - `writeup` stored as sentences `[{text, claim_ids}]`, so "every sentence cites" becomes a DB check.
-  - Re-research every seed entity.
-  - `kb_slug` on cartoTaco's spec tables, and the nightly spec sync.
-  - Done when every seed claim has a credited source and the sync is live.
-- **Phase 3, Long form and autonomy.**
-  - `article` / `passage` tables (per-sentence citations with locators), briefs, agent drafts edited by a human, pgvector passage retrieval.
-  - Gap filler fed by concierge misses (`found: false` + 👎), then the auditor (`content_hash` re-fetch) and the linker.
-  - ~~Auto-accept policy once acceptance rates exist.~~ Moved into phase 1 (2026-10-25, the owner's call after reviewing the first entity by hand): `review --auto` publishes proposals Claude finds supported and uncontested; conflicts, unsupported quotes and anything restating a rejected fact wait for a human. Articles stay human-reviewed. Writeups (short descriptions built only from published claims, every sentence citing them) are auto-reviewed against those claims, the owner's call on 2026-10-27; a flagged one waits for a human.
-  - Still open, from a comment on the design doc: may agents find article sources themselves, or only use the ones the owner picks?
-  - Done when 5 articles are published and a miss becomes an entity in under a week.
-- **Phase 4, Reach.** Hybrid FTS + embedding search, a cartoTaco glossary built from a snapshot, other consumers and domains.
+- **Phase 1: done (2026-10-27).** cartoTaco staging answers "what is chavindeca?" from cocina with spots and a Sources line (cartoTaco #93).
+- **Phase 2: done (2026-10-30).** See below.
+- **Phase 3: next.** It starts from the section further down.
 
-## Verification
+The live knowledgebase (snapshot `kb-2026.10.28.2`) holds 76 foods, 1271 claims and 71 writeups. About 100 flagged proposals wait in the inbox: source conflicts and judgement calls.
+
+## Phase 2, as built: curation and coverage
+
+- **Coverage.** Every seeded entity was researched (82 runs, about $14), and auto-review published about 1200 proposals. Six names turned up nothing to propose; they look like individual spots' names for their own specials: caramelo, el-pueblito-burrito, razurados, taco-hass, tacontento and toritos. They stay proposed and out of every read.
+- **Writeups** (migration 003, `write.py`):
+  - Each is 2–4 sentences made only from published claims, and every sentence cites the claims it states (`sentences_ok`).
+  - Code refuses a sentence that copies 8 or more consecutive words of a quote. The 15% part of the overlap threshold was dropped.
+  - Writeups are auto-reviewed against the claims they cite. Articles stay human-only.
+- **Auto-review** (`review --auto`), extended to:
+  - Reject clear-cut "unsupported" proposals: anything not `borderline`.
+  - Flag conflicts and judgement calls for a person.
+  - Reject in code a restated fact that a person rejected or retired, and a "kind of taco" alias on a menu category.
+  - Flag an alias that another entity uses (`name_clash`). Only a person's rejection blocks a fact from returning.
+  - `--recheck` re-judges the flagged backlog: it can reject, never accept.
+- **Fast reads** (migration 004): `cards_of()` builds every card in one set-based pass. The old per-entity `card()` exceeded anon's 3-second statement timeout at about 1200 claims.
+- **Retire** (migration 005, `retire.py`):
+  - A person takes published claims down. An entity left with no published claims goes too, with its names and writeup, and its open proposals are rejected. Nothing publishes onto a retired entity.
+  - `--into` passes a duplicate's name to the entry that stays. It was used for gringas → gringa and sonoran-hot-dog → sonoran-dog.
+- **Wikidata names** (`wikidata.py`):
+  - The one approved robots exception: Wikidata's Action API, recorded in CLAUDE.md.
+  - A match needs exactly one food item with the exact name. Its English and Spanish labels and aliases become `also_known_as` claims credited to Wikidata (CC0).
+- **Web inbox and MCP deploy:**
+  - `app/` is on Vercel at https://cocina-tau-six.vercel.app, with the inbox at `/review` and the MCP server at `/mcp`.
+  - Sign-in: Supabase magic links for addresses on the `REVIEWERS` list, via `/auth/confirm` (a token-hash link behind a button, so a mail app's link preview can't use it up).
+  - The app runs Svelte 5 (SvelteKit 2.70 needs it), and CI builds it and smoke-tests the pages.
+- **cartoTaco** (#96, #97):
+  - Spot cards show a specialty's writeup and Sources when its name exactly matches a cocina entry, served from `/api/kb`. Otherwise the old text stays.
+  - The Sources list is one work per line (#94).
+  - The evals pin `kb-2026.10.28.2`.
+- **Changed from the plan:**
+  - No `kb_slug` migration and no nightly sync: cartoTaco matches by name at runtime.
+  - No batch accept: auto-review covers it.
+  - Creator and entity pages deferred.
+
+## Phase 3: long form and autonomy (next)
+
+**Goal:** cocina grows from what people ask, keeps its sources honest, and adds long-form pieces.
+
+**Done when:** a concierge miss becomes a researched, published entity within a week without a person starting it, and 5 articles are published.
+
+Suggested order, each its own PR series:
+
+1. **Gap filler.** Turn the concierge's misses into entities.
+   - **The signal:** in cartoTaco, `describe_dish` returns `found: false` for a food it doesn't know, and replies carry 👍/👎 feedback.
+   - **Find out first** where cartoTaco records these. LangSmith traces carry `kb_version` and the tool results; check whether there's a feedback table.
+   - **Then, on a schedule:** gather new misses, dedupe them through `search_entities`, then run `seed --add` → `research` → `review --auto`.
+   - **Where it runs:** a GitHub Actions cron (it needs `ANTHROPIC_API_KEY` and `COCINA_SUPABASE_SERVICE_KEY` as repo secrets) or Vercel cron. Either way, with a per-run cost cap. Research costs about $0.17 per entity.
+   - **Skip** names that aren't foods: an entity research finds nothing for is skipped and listed, like the six above.
+2. **Auditor.** Keep sources honest.
+   - **Re-fetch** cited pages politely (robots and `noai` as usual). Compare the text hash `content_hash`, and re-run `quote_found` for each published quote.
+   - **When a quote is gone,** a page is dead or a new `noai` appears, propose a retire with the reason.
+   - **Needed first:** `retire` proposals have no inbox UI yet; that comes before automatic retire proposals. Or let them auto-accept when a claim has other credited evidence left.
+   - **Record when each source was last checked,** and keep `verified_at` on cards meaningful.
+3. **Articles.** Long-form history and technique, with a citation on every sentence.
+   - **Tables:** `article` and `passage`, with per-sentence citations to claims or source locators (a page or a timestamp).
+   - **The flow:** an article brief (the owner picks the topic and sources; books and interviews can be entered by hand), an agent draft, then the owner edits and publishes. This is the one human-only publish path.
+   - **Retrieval:** pgvector over passages for retrieval.
+   - **Copying:** reuse the 8-word copy check.
+   - **Open question:** may agents find article sources themselves, or only use the ones the owner picks?
+4. **Linker and merge.** `variant_of` and other links between entries, a real `merge` op that moves claims rather than retiring the duplicate's (`retire --into` does that today), and links surfaced in cards (`linked_from` exists).
+
+**Carried over:**
+- **Issue #1:** set the hosted Supabase auth settings (Site URL, redirect URLs, email templates) from the repo. The owner set them by hand on 2026-10-30.
+- **Sign-in email:** custom SMTP; the built-in sender allows only a few emails an hour.
+- **Decisions still open:** whether the MCP server and data go public, and under what license (the README says none is chosen); and who reviews besides the owner.
+- **Scale:** `cards()` takes about 0.8 s on the server for 76 entities. Past a few hundred entities, page it, or let `getKb()` read the snapshot.
+- **Flag backlog:** in the web inbox.
+
+## Phase 4 (milestone)
+
+**Reach.** Hybrid full-text and embedding search, a cartoTaco glossary built from a snapshot, other consumers and domains.
+
+## Verification (phase 1)
 
 - **DB:** `supabase db reset && supabase test db`. `citations.test.sql` asserts that publishing a claim without evidence fails, that a 401-character quote fails, that `accept_proposal` publishes entity + claim + alias together, that a `do_not_use` creator blocks publication, and that anon can't see proposed rows or `source_text`.
 - **Pipeline:**
