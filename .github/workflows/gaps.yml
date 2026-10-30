@@ -1,0 +1,37 @@
+name: Gap filler
+
+# Daily: the foods cartoTaco's concierge had no entry for become researched,
+# auto-reviewed entities (python -m cocina.gaps, capped per run). A day with no
+# misses costs nothing. This repo is public, so the job prints counts and the
+# slugs it added; the names and reasons are in the run's run_log row.
+on:
+  schedule:
+    - cron: '23 13 * * *'   # 06:23 in Tucson
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: gaps
+  cancel-in-progress: false
+
+jobs:
+  gaps:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    defaults:
+      run:
+        working-directory: pipeline
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - run: python -m cocina.gaps
+        env:
+          COCINA_SUPABASE_URL: ${{ vars.COCINA_SUPABASE_URL }}
+          COCINA_SUPABASE_SERVICE_KEY: ${{ secrets.COCINA_SUPABASE_SERVICE_KEY }}
+          ANTHROPIC_API_KEY: ${{ secrets.ANTHROPIC_API_KEY }}
+          LANGSMITH_API_KEY: ${{ secrets.LANGSMITH_API_KEY }}

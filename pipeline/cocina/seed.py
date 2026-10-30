@@ -37,6 +37,13 @@ def _note(table: str, row: dict, *fields: str) -> str:
     return f"Imported from cartoTaco {table} #{row.get('id') or row.get('slug')}. " + " | ".join(parts)
 
 
+def add_entity(slug: str, kind: str, name: str, note: str, aliases: list[str] = ()) -> None:
+    """One proposed entity, its name and aliases as search hints."""
+    entity = db().table("entity").insert({"slug": slug, "kind": kind, "name": name, "note": note}).execute().data[0]
+    names = {norm(n): n for n in [name, *aliases]}                   # dedupe by normalised form
+    db().table("alias").insert([{"entity_id": entity["id"], "text": n} for n in names.values()]).execute()
+
+
 def seed(extra: list[tuple[str, str]] = ()) -> None:
     ct = create_client(env("CARTOTACO_SUPABASE_URL"), env("CARTOTACO_ANON_KEY"))
     try:
@@ -71,9 +78,7 @@ def seed(extra: list[tuple[str, str]] = ()) -> None:
                 print(f"skipped {name!r} ({kind}): slug {slug!r} is already a {have[slug]}")
             continue
         have[slug] = kind
-        entity = db().table("entity").insert({"slug": slug, "kind": kind, "name": name, "note": note}).execute().data[0]
-        names = {norm(n): n for n in [name, *aliases]}               # dedupe by normalised form
-        db().table("alias").insert([{"entity_id": entity["id"], "text": n} for n in names.values()]).execute()
+        add_entity(slug, kind, name, note, aliases)
         added += 1
     print(f"{added} entities added, {len(rows) - added} already present")
 

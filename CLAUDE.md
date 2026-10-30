@@ -6,7 +6,7 @@ cocina is a curated knowledgebase of Mexican food concepts (dishes, salsas, chil
 
 - `supabase/migrations/` – the schema, citation rules and read functions (`001_core`), proposal flags (`002`), writeups (`003`)
 - `supabase/tests/` – pgTAP tests of the citation rules (`supabase test db`)
-- `pipeline/` – Python 3.12: `seed`, `research`, `write`, `review`, `snapshot` (run as `python -m cocina.<name>` from `pipeline/`)
+- `pipeline/` – Python 3.12: `seed`, `research`, `write`, `review`, `snapshot`, `gaps` (run as `python -m cocina.<name>` from `pipeline/`)
 - `app/` – SvelteKit on Vercel: the read-only MCP server at `/mcp` and the review inbox at `/review` (Supabase magic-link sign-in, `REVIEWERS` allowlist; decisions go through the same `accept_proposal`/`reject_proposal`, run server-side with the secret key and signed with the reviewer's email)
 - `.env` at the repo root is shared by the pipeline (symlinked as `pipeline/.env`) and the app (`kit.env.dir`); see `.env.example`
 
@@ -24,6 +24,7 @@ cocina is a curated knowledgebase of Mexican food concepts (dishes, salsas, chil
 - `python -m cocina.review --auto [--entity slug] [--recheck]` – after research or write: Claude rejects proposals whose quotes clearly don't state them, flags conflicts and judgement calls for a person (`proposal.flag`), and `accept_proposal` publishes the rest as `auto-review` (~$0.02 per entity). `--recheck` re-judges what is already flagged: it can reject the clear-cut, never accept. Checked in code whatever the model says: a fact a person rejected or retired, and an `also_known_as` that is another entity's name or a kind of this one named after another (`name_clash`, plurals folded)
 - `python -m cocina.review [--entity slug] [--kind dish]` – a human decides what's still open, flag shown
 - `python -m cocina.retire <claim id>... | --entity slug [--into slug] --why "…"` – a person takes published claims down (shows them, asks first). `--entity` retires the entity with its last claim; `--into` gives its name to a survivor as a search hint (duplicates)
+- `python -m cocina.gaps [--max 5] [--budget 2] [--dry-run]` – the gap filler (daily in `.github/workflows/gaps.yml`): names cartoTaco's concierge had no entry for, read from LangSmith feedback `kb_miss` on its production and staging traces since the last finished run, skipped when `search_entities` already finds them (published or proposed), checked by Claude for being a Mexican food (kind and usual name), then `add_entity` → `research` → `review --auto` → `write` → `review --auto`, most 👎'd and most asked first, within the per-run caps; what the cap leaves goes first next run. Stdout (a public Actions log) carries counts and added slugs only; names and reasons are in the `run_log` row (agent `gaps`). Needs `LANGSMITH_API_KEY`
 - `python -m cocina.snapshot [--release]` – `snapshots/kb-YYYY.MM.DD.jsonl`, optionally a GitHub release (a second one that day is tagged `.2`)
 
 ## Data model (and why)
