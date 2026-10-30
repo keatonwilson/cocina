@@ -296,7 +296,7 @@ def _publish(label: str, accept: list[int], flags: dict[int, str], cost: float,
              reject: dict[int, str] | None = None) -> None:
     """Reject what is clearly wrong, store the flags, accept the rest through the gate, log the run."""
     reject = reject or {}
-    for pid, why in reject.items():   # the reason goes back to the agent, and blocks the fact returning
+    for pid, why in reject.items():   # the reason goes back to the agent; auto-review's own rejections don't block the fact (a better quote may return)
         db().rpc("reject_proposal", {"p_id": pid, "p_reviewer": "auto-review", "p_reason": why}).execute()
     for pid, why in flags.items():
         db().table("proposal").update({"flag": why}).eq("id", pid).execute()
