@@ -15,7 +15,6 @@ In the terminal: a accept · r reject (asks why) · s skip · o open the sources
 
 import argparse
 import getpass
-import re
 from urllib.parse import urlsplit
 import os
 import webbrowser
@@ -164,11 +163,6 @@ class WriteupCheck(BaseModel):
     problems: list[Problem]
 
 
-# ponytail: wording an early prompt let through as flags; the prompt now forbids them
-NOT_A_FLAG = re.compile(r"\bnot flagged\b|\bno conflict\b|\bactually (?:it )?matches\b|\bis consistent\b|"
-                        r"\bare compatible\b|\bis compatible\b", re.I)
-
-
 def split(proposals: list[dict], flags: list, rejected: dict[tuple[str, str], str],
           recheck: bool = False) -> tuple[list[int], dict[int, str], dict[int, str]]:
     """(accept, {proposal: flag for a person}, {proposal: reason to reject it}).
@@ -178,9 +172,8 @@ def split(proposals: list[dict], flags: list, rejected: dict[tuple[str, str], st
     or retired (rejected: (predicate, norm(value)) → reason), whatever the model says. Every
     other flag waits for a person, conflicts always. A flag naming an id we didn't send is
     ignored. recheck: judge already-flagged proposals too, but never accept one; unless it
-    can be rejected, a person still decides it. A flag whose own words say nothing is wrong
-    ("not flagged", "no conflict") was never a flag: recheck judges it afresh."""
-    was_flagged = {p["id"] for p in proposals if p.get("flag") and not (recheck and NOT_A_FLAG.search(p["flag"]))}
+    can be rejected, a person still decides it."""
+    was_flagged = {p["id"] for p in proposals if p.get("flag")}
     asked = {p["id"] for p in proposals} - (set() if recheck else was_flagged)
     flag: dict[int, str] = {}
     reject: dict[int, str] = {}

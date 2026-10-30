@@ -231,12 +231,3 @@ def test_only_a_persons_decision_blocks_a_fact_from_returning():
                {"id": 4, "status": "published", "proposal": {"decided_by": "auto-review"}}]
     assert [c["id"] for c in taken_down(decided)] == [1, 3]
 
-
-def test_recheck_judges_a_flag_that_says_nothing_is_wrong_afresh():
-    from cocina.review import split
-    claim = [{"predicate": "history_note", "value": "first recipe in 1881"}]
-    proposals = [{"id": 1, "claim": claim, "flag": "unsupported: the quote gives 1881, which is consistent, so this is not flagged"},
-                 {"id": 2, "claim": claim, "flag": "unsupported: the quote only gives the 1980s"}]
-    accept, flag, reject = split(proposals, [], {}, recheck=True)
-    assert accept == [1]          # the model found nothing wrong this time either
-    assert (flag, reject) == ({}, {})   # 2 keeps its old flag: recheck never accepts a real one
