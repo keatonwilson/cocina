@@ -4,9 +4,9 @@ cocina is a curated knowledgebase of Mexican food concepts (dishes, salsas, chil
 
 ## Layout
 
-- `supabase/migrations/` – the schema, citation rules and read functions (`001_core`), proposal flags (`002`), writeups (`003`)
+- `supabase/migrations/` – the schema, citation rules and read functions (`001_core`), proposal flags (`002`), writeups (`003`), retire (`005`), articles (`006`)
 - `supabase/tests/` – pgTAP tests of the citation rules (`supabase test db`)
-- `pipeline/` – Python 3.12: `seed`, `research`, `write`, `review`, `snapshot`, `gaps` (run as `python -m cocina.<name>` from `pipeline/`)
+- `pipeline/` – Python 3.12: `seed`, `research`, `write`, `review`, `snapshot`, `gaps`, `article` (run as `python -m cocina.<name>` from `pipeline/`)
 - `app/` – SvelteKit on Vercel: the read-only MCP server at `/mcp` and the review inbox at `/review` (Supabase magic-link sign-in, `REVIEWERS` allowlist; decisions go through the same `accept_proposal`/`reject_proposal`, run server-side with the secret key and signed with the reviewer's email)
 - `.env` at the repo root is shared by the pipeline (symlinked as `pipeline/.env`) and the app (`kit.env.dir`); see `.env.example`
 
@@ -14,7 +14,7 @@ cocina is a curated knowledgebase of Mexican food concepts (dishes, salsas, chil
 
 - `supabase start` – local Postgres + REST (migrations applied). `supabase db reset` re-applies them
 - `supabase test db` – citation-rule tests
-- `cd pipeline && .venv/bin/pytest -q` – quote check, grouping, page text (no network)
+- `cd pipeline && .venv/bin/pytest -q` – quote check, grouping, page text, article checks and edit file (no network)
 - `cd app && pnpm check && pnpm test` – type check, node:test; `pnpm dev` serves `/mcp` and `/review`
 - Inbox sign-in setup on the hosted project (dashboard, not migrations): Authentication → URL Configuration: Site URL = the deploy URL, Redirect URLs include `<deploy>/auth/confirm` (and `http://localhost:5173/auth/confirm` for dev); Authentication → Emails: the Magic Link and Confirm signup templates hold `supabase/templates/sign_in.html` (`config.toml` applies it to local stacks)
 - `python -m cocina.seed` – proposed entities from cartoTaco's spec tables and Salsa Atlas (read-only, anon key; re-runnable)
@@ -25,6 +25,7 @@ cocina is a curated knowledgebase of Mexican food concepts (dishes, salsas, chil
 - `python -m cocina.review [--entity slug] [--kind dish]` – a human decides what's still open, flag shown
 - `python -m cocina.retire <claim id>... | --entity slug [--into slug] --why "…"` – a person takes published claims down (shows them, asks first). `--entity` retires the entity with its last claim; `--into` gives its name to a survivor as a search hint (duplicates)
 - `python -m cocina.gaps [--max 5] [--budget 2] [--dry-run]` – the gap filler (daily in `.github/workflows/gaps.yml`): names cartoTaco's concierge had no entry for, read from LangSmith feedback `kb_miss` on its production and staging traces since the last finished run, skipped when `search_entities` already finds them (published or proposed), checked by Claude for being a Mexican food (kind and usual name), then `add_entity` → `research` → `review --auto` → `write` → `review --auto`, most 👎'd and most asked first, within the per-run caps; what the cap leaves goes first next run. Stdout (a public Actions log) carries counts and added slugs only; names and reasons are in the `run_log` row (agent `gaps`). Needs `LANGSMITH_API_KEY`
+- `python -m cocina.article sources|draft <brief> | edit|publish <slug> | drop <slug> --why "…"` – articles, the one human-only publish path. A brief is a TOML file in the git-ignored `briefs/` (format in the module docstring): slug, title, angle, the owner's sources (KB ids, URLs, books and interviews with excerpt files marked `[p. 112]` / `[12:30]`). `draft` stores them, searches for up to 4 more pages (`search = false` stops it), and makes one Sonnet call over the whole sources (~$0.18, ~1 min); a sentence failing a check stays in the draft, marked. `edit` opens it in `$EDITOR` (one sentence per line, cites under `---`), `publish` re-checks and accepts as `COCINA_REVIEWER`
 - `python -m cocina.snapshot [--release]` – `snapshots/kb-YYYY.MM.DD.jsonl`, optionally a GitHub release (a second one that day is tagged `.2`)
 
 ## Data model (and why)
@@ -37,6 +38,7 @@ cocina is a curated knowledgebase of Mexican food concepts (dishes, salsas, chil
 - `alias.claim_id` is set for a sourced name (`also_known_as`), null for a search hint (seed names, misspellings).
 - Seed text from cartoTaco goes into `entity.note`: a research hint ("may contain errors"), never evidence.
 - `writeup` (entity, `sentences` jsonb `[{text, claims: [ids]}]`, status, proposal): prose made only from published claims, every sentence citing the claims it states. One published per entity; accepting a new one retires the old. `write.py` refuses a sentence that copies 8+ consecutive words of a quote.
+- `article` (slug, title, `sections` jsonb `[{heading, paragraphs: [[{text, cites: [{source, quote, locator}]}]]}]`, `sources` = the owner's picks, `found` = pages the drafter found, status, proposal): long-form prose citing places in sources, not claims, so books and interviews can be cited by page or timestamp. One published per slug; accepting a new version retires the old. `article.py` checks each quote against the text we hold (a source with none passes on the owner's word), copying (8 words in a row from any of the article's source texts) and sets a book's locator from its excerpt markers. No passages or embeddings: the drafter reads whole sources in one prompt.
 
 ## Rules the database enforces
 
@@ -45,12 +47,13 @@ Deferred constraint triggers check at commit, so a whole proposal is judged at o
 - a published entity needs a published claim; a published claim's `object_id` must be published
 - an alias with a `claim_id` is published only with its claim
 - a published writeup's every sentence cites at least one claim, and each cited claim is its entity's own, published and still credited (`sentences_ok`); `card()` and RLS hide a writeup once a cited claim loses its credit
+- a published article's every sentence has text and cites at least one credited source with a 1–400 character quote (`article_ok`); RLS and the reads hide it once a cited source loses its credit. `accept_proposal` refuses an article signed `auto-review` or `draft`: only a person publishes one
 
 `accept_proposal(id, reviewer)` is the one gate: it publishes the proposal's rows (plus a seeded entity and its name hints on its first accepted claim) and retires what a `change` supersedes. `retire` (proposal.`retires` = claim ids, migration 005) takes claims and the aliases they back down, and an entity left with none goes too, with its names and writeup; nothing is deleted. `merge` isn't implemented (retire `--into` covers duplicates). `reject_proposal(id, reviewer, reason)` stores the reason for the agent. Both are service-role only.
 
 ## Reads (published only, whoever calls)
 
-`cards()`, `get_entity(slug)` (claims with ids, the live `writeup`), `search_entities(q, kind, all, limit)` (exact → typo-tolerant with search.js's thresholds → whole-word containment), `related(slug, predicate, hops ≤ 2)`, `kb_version()` (last accepted decision; every MCP answer carries it). RLS lets anon read published rows plus sources/creators; `proposal`, `run_log`, `source_text` are service-role only.
+`cards()`, `get_entity(slug)` (claims with ids, the live `writeup`), `search_entities(q, kind, all, limit)` (exact → typo-tolerant with search.js's thresholds → whole-word containment), `related(slug, predicate, hops ≤ 2)`, `kb_version()` (last accepted decision; every MCP answer carries it), `articles()` and `get_article(slug)` (sections as stored plus `sources`: each cited source's credit by id; the MCP `articles` tool). RLS lets anon read published rows plus sources/creators; `proposal`, `run_log`, `source_text` are service-role only.
 
 ## Research pipeline notes
 

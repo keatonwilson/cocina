@@ -104,7 +104,8 @@ def about(p: dict) -> dict:
 
 def open_proposals(entity: str | None = None, kind: str | None = None) -> list[dict]:
     rows = all_rows(lambda: db().table("proposal").select(SELECT).eq("status", "open").order("id"))
-    return [p for p in rows if (not entity or about(p).get("slug") == entity)
+    # Claims, evidence and writeups only: an article is published with `cocina.article publish`
+    return [p for p in rows if about(p) and (not entity or about(p).get("slug") == entity)
             and (not kind or about(p).get("kind") == kind)]
 
 

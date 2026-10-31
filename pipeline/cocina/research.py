@@ -86,16 +86,20 @@ def _cost(usage) -> float:
     return tokens_in * PRICE_IN + usage.output_tokens * PRICE_OUT + searches * PRICE_SEARCH
 
 
-def find_urls(ai: anthropic.Anthropic, entity: dict, aliases: list[str]) -> tuple[list[str], float]:
-    """Let Claude choose the searches; take the URLs from the search results themselves."""
+def search_prompt(entity: dict, aliases: list[str]) -> str:
     aka = f", also called {', '.join(aliases)}" if aliases else ""
+    return SEARCH_PROMPT.format(name=entity["name"], kind=entity["kind"], aka=aka)
+
+
+def find_urls(ai: anthropic.Anthropic, prompt: str) -> tuple[list[str], float]:
+    """Let Claude choose the searches; take the URLs from the search results themselves."""
     resp = ai.beta.messages.create(
         model=MODEL,
         max_tokens=4000,
         # ponytail: basic web_search, not _20260209; cartoTacoMenuExtract saw the newer
         # variant's filtering sandbox fail (src/description_gen.py:_web_search_tools)
         tools=[{"type": "web_search_20250305", "name": "web_search", "max_uses": 3}],
-        messages=[{"role": "user", "content": SEARCH_PROMPT.format(name=entity["name"], kind=entity["kind"], aka=aka)}],
+        messages=[{"role": "user", "content": prompt}],
         **FALLBACK,
     )
     urls: list[str] = []
@@ -270,7 +274,7 @@ def research(slug: str) -> dict:
     errors, cost, proposals = [], 0.0, 0
 
     try:
-        urls, c = find_urls(ai, entity, aliases)
+        urls, c = find_urls(ai, search_prompt(entity, aliases))
         cost += c
         pages = []
         for url in urls:

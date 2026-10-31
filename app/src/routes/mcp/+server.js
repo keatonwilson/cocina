@@ -83,6 +83,22 @@ function server() {
     }
   );
 
+  mcp.registerTool(
+    'articles',
+    {
+      description:
+        'Long-form articles on Mexican food history and technique, written from named sources and edited by a person. ' +
+        'Without a slug, lists them. With one, returns its sections: every sentence cites sources (by id, with a quote ' +
+        `and a page or timestamp), credited under "sources". ${CREDIT_NOTE}`,
+      inputSchema: { slug: z.string().min(1).max(100).optional() }
+    },
+    async ({ slug }) => {
+      if (!slug) return reply({ articles: await rpc('articles') });
+      const article = await rpc('get_article', { p_slug: slug });
+      return article ? reply({ article, note: CREDIT_NOTE }) : reply({ error: `No published article "${slug}"` }, true);
+    }
+  );
+
   return mcp;
 }
 
