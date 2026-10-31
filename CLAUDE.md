@@ -4,9 +4,9 @@ cocina is a curated knowledgebase of Mexican food concepts (dishes, salsas, chil
 
 ## Layout
 
-- `supabase/migrations/` – the schema, citation rules and read functions (`001_core`), proposal flags (`002`), writeups (`003`), retire (`005`), articles (`006`)
+- `supabase/migrations/` – the schema, citation rules and read functions (`001_core`), proposal flags (`002`), writeups (`003`), retire (`005`), articles (`006`), the auditor (`007`)
 - `supabase/tests/` – pgTAP tests of the citation rules (`supabase test db`)
-- `pipeline/` – Python 3.12: `seed`, `research`, `write`, `review`, `snapshot`, `gaps`, `article` (run as `python -m cocina.<name>` from `pipeline/`)
+- `pipeline/` – Python 3.12: `seed`, `research`, `write`, `review`, `snapshot`, `gaps`, `article`, `audit` (run as `python -m cocina.<name>` from `pipeline/`)
 - `app/` – SvelteKit on Vercel: the read-only MCP server at `/mcp` and the review inbox at `/review` (Supabase magic-link sign-in, `REVIEWERS` allowlist; decisions go through the same `accept_proposal`/`reject_proposal`, run server-side with the secret key and signed with the reviewer's email)
 - `.env` at the repo root is shared by the pipeline (symlinked as `pipeline/.env`) and the app (`kit.env.dir`); see `.env.example`
 
@@ -14,7 +14,7 @@ cocina is a curated knowledgebase of Mexican food concepts (dishes, salsas, chil
 
 - `supabase start` – local Postgres + REST (migrations applied). `supabase db reset` re-applies them
 - `supabase test db` – citation-rule tests
-- `cd pipeline && .venv/bin/pytest -q` – quote check, grouping, page text, article checks and edit file (no network)
+- `cd pipeline && .venv/bin/pytest -q` – quote check, grouping, page text, article checks and edit file, the auditor's judgements (no network)
 - `cd app && pnpm check && pnpm test` – type check, node:test; `pnpm dev` serves `/mcp` and `/review`
 - Inbox sign-in setup on the hosted project (dashboard, not migrations): Authentication → URL Configuration: Site URL = the deploy URL, Redirect URLs include `<deploy>/auth/confirm` (and `http://localhost:5173/auth/confirm` for dev); Authentication → Emails: the Magic Link and Confirm signup templates hold `supabase/templates/sign_in.html` (`config.toml` applies it to local stacks)
 - `python -m cocina.seed` – proposed entities from cartoTaco's spec tables and Salsa Atlas (read-only, anon key; re-runnable)
@@ -22,19 +22,20 @@ cocina is a curated knowledgebase of Mexican food concepts (dishes, salsas, chil
 - `python -m cocina.wikidata <slug>... | --all` – English/Spanish labels and aliases of the one Wikidata food item named exactly like the entity, proposed as `also_known_as` claims (source: Wikidata, CC0); free
 - `python -m cocina.write <slug>... | --all` – a writeup (2–4 cited sentences) from an entity's published claims; `--all` = served entities with no live writeup (~$0.005 each, ~$0.009 with a retry; auto-review ~$0.002)
 - `python -m cocina.review --auto [--entity slug] [--recheck]` – after research or write: Claude rejects proposals whose quotes clearly don't state them, flags conflicts and judgement calls for a person (`proposal.flag`), and `accept_proposal` publishes the rest as `auto-review` (~$0.02 per entity). `--recheck` re-judges what is already flagged: it can reject the clear-cut, never accept. Checked in code whatever the model says: a fact a person rejected or retired, and an `also_known_as` that is another entity's name or a kind of this one named after another (`name_clash`, plurals folded)
-- `python -m cocina.review [--entity slug] [--kind dish]` – a human decides what's still open, flag shown
+- `python -m cocina.review [--entity slug] [--kind dish]` – a human decides what's still open, flag shown. The auditor's claim retires come first (`a` retire · `r` keep: it isn't proposed again), after the article quotes its last run found gone
 - `python -m cocina.retire <claim id>... | --entity slug [--into slug] --why "…"` – a person takes published claims down (shows them, asks first). `--entity` retires the entity with its last claim; `--into` gives its name to a survivor as a search hint (duplicates)
 - `python -m cocina.gaps [--max 5] [--budget 2] [--dry-run]` – the gap filler (daily in `.github/workflows/gaps.yml`): names cartoTaco's concierge had no entry for, read from LangSmith feedback `kb_miss` on its production and staging traces since the last finished run, skipped when `search_entities` already finds them (published or proposed), checked by Claude for being a Mexican food (kind and usual name), then `add_entity` → `research` → `review --auto` → `write` → `review --auto`, most 👎'd and most asked first, within the per-run caps; what the cap leaves goes first next run. Stdout (a public Actions log) carries counts and added slugs only; names and reasons are in the `run_log` row (agent `gaps`). Needs `LANGSMITH_API_KEY`
 - `python -m cocina.article sources|draft <brief> | edit|publish <slug> | drop <slug> --why "…"` – articles, the one human-only publish path. A brief is a TOML file in the git-ignored `briefs/` (format in the module docstring): slug, title, angle, the owner's sources (KB ids, URLs, books and interviews with excerpt files marked `[p. 112]` / `[12:30]`). `draft` stores them, searches for up to 4 more pages (`search = false` stops it), and makes one Sonnet call over the whole sources (~$0.18, ~1 min); a sentence failing a check stays in the draft, marked. `edit` opens it in `$EDITOR` (one sentence per line, cites under `---`), `publish` re-checks and accepts as `COCINA_REVIEWER`
+- `python -m cocina.audit [--dry-run]` – the auditor (weekly in `.github/workflows/audit.yml`, no model calls): re-fetches every credited web page a published claim or article quotes and re-checks each quote. Same text, or new text holding every quote: verified (the quotes' `fetched_at`, cards' `verified_at`, becomes now; new text replaces the stored copy). A quote missing from new text, or a page now `noai`: gone. robots.txt or a 401/403 refusing us: unchecked. Any other failure counts in `source.failures`; the third in a row makes the page dead. A gone quote is retired at once (author and reviewer `audit`) when its claim keeps another credited quote; a claim left with none gets a retire proposal for a person, unless one kept it before. Article quotes are only listed. Stdout carries counts; URLs and reasons go to the `run_log` row (agent `audit`)
 - `python -m cocina.snapshot [--release]` – `snapshots/kb-YYYY.MM.DD.jsonl`, optionally a GitHub release (a second one that day is tagged `.2`)
 
 ## Data model (and why)
 
-- `entity` (slug, kind, name, `note`) → `claim` (predicate, `value text`, optional `object_id`) → `evidence` (quote ≤ 400 chars, locator) → `source` (+ `source_creator` → `creator`). `source_text` holds the fetched text quotes are checked against; it is never served.
+- `entity` (slug, kind, name, `note`) → `claim` (predicate, `value text`, optional `object_id`) → `evidence` (quote ≤ 400 chars, locator) → `source` (+ `source_creator` → `creator`). `source_text` holds the fetched text quotes are checked against; it is never served. `source.checked_at`, `failures` and `check_error` are the auditor's.
 - **Edges are claims** with an `object_id` (`variant_of`, `uses`, `served_with`, `originates_in`…), so links need evidence like any fact. Which predicates may link, per kind, is in `predicate`.
 - **One fact per claim**, `value` as short text; agreeing sources become several evidence rows on one claim (unique on entity + predicate + `norm(value)`).
 - **Drafts live in the real tables**: `entity`, `claim`, `alias` and `evidence` carry `status` (`proposed | published | rejected | retired`) and `proposal_id`. `proposal` is a thin header (author, rationale, decision, reason).
-- `confidence` (distinct sites/works agreeing) and `verified_at` are derived in `card()`, never stored.
+- `confidence` (distinct sites/works agreeing) and `verified_at` (the newest `fetched_at` of its quotes, which the auditor moves when it finds a quote still there) are derived in `card()`, never stored.
 - `alias.claim_id` is set for a sourced name (`also_known_as`), null for a search hint (seed names, misspellings).
 - Seed text from cartoTaco goes into `entity.note`: a research hint ("may contain errors"), never evidence.
 - `writeup` (entity, `sentences` jsonb `[{text, claims: [ids]}]`, status, proposal): prose made only from published claims, every sentence citing the claims it states. One published per entity; accepting a new one retires the old. `write.py` refuses a sentence that copies 8+ consecutive words of a quote.
@@ -47,9 +48,9 @@ Deferred constraint triggers check at commit, so a whole proposal is judged at o
 - a published entity needs a published claim; a published claim's `object_id` must be published
 - an alias with a `claim_id` is published only with its claim
 - a published writeup's every sentence cites at least one claim, and each cited claim is its entity's own, published and still credited (`sentences_ok`); `card()` and RLS hide a writeup once a cited claim loses its credit
-- a published article's every sentence has text and cites at least one credited source with a 1–400 character quote (`article_ok`); RLS and the reads hide it once a cited source loses its credit. `accept_proposal` refuses an article signed `auto-review` or `draft`: only a person publishes one
+- a published article's every sentence has text and cites at least one credited source with a 1–400 character quote (`article_ok`); RLS and the reads hide it once a cited source loses its credit. `accept_proposal` refuses an article signed `auto-review`, `draft` or `audit`: only a person publishes one
 
-`accept_proposal(id, reviewer)` is the one gate: it publishes the proposal's rows (plus a seeded entity and its name hints on its first accepted claim) and retires what a `change` supersedes. `retire` (proposal.`retires` = claim ids, migration 005) takes claims and the aliases they back down, and an entity left with none goes too, with its names and writeup; nothing is deleted. `merge` isn't implemented (retire `--into` covers duplicates). `reject_proposal(id, reviewer, reason)` stores the reason for the agent. Both are service-role only.
+`accept_proposal(id, reviewer)` is the one gate: it publishes the proposal's rows (plus a seeded entity and its name hints on its first accepted claim) and retires what a `change` supersedes. `retire` (proposal.`retires` = claim ids, migration 005; `retires_evidence` = quotes, 007) takes claims, quotes and the aliases the claims back down; only a person retires a claim (`accept_proposal` refuses one signed `auto-review`, `draft` or `audit`), while the auditor may retire a quote its claim doesn't need (evidence_ok refuses one that would leave a claim uncredited); and an entity left with none goes too, with its names and writeup; nothing is deleted. `merge` isn't implemented (retire `--into` covers duplicates). `reject_proposal(id, reviewer, reason)` stores the reason for the agent. Both are service-role only.
 
 ## Reads (published only, whoever calls)
 
@@ -58,7 +59,7 @@ Deferred constraint triggers check at commit, so a whole proposal is judged at o
 ## Research pipeline notes
 
 - Search uses `web_search_20250305` on purpose (the newer variant's filtering sandbox failed in cartoTacoMenuExtract); URLs come from the search result blocks, not model text. Social/aggregator hosts are skipped (`SKIP_HOSTS`).
-- Pages are fetched by us (`fetch.py`, stdlib): robots.txt with our UA, `noai` meta respected, text hashed for the future auditor.
+- Pages are fetched by us (`fetch.py`, stdlib): robots.txt with our UA, `noai` meta respected, text hashed for the auditor. A site whose robots.txt can't be read (unreachable, 5xx) is down, not refusing us: `Skipped` says which.
 - **One robots exception:** Wikidata's Action API (`www.wikidata.org/w/api.php`, used only by `wikidata.py`). Its robots.txt disallows crawlers on `/w/`, but the API is documented for programs; the owner approved using it on 2026-10-28 with our UA, one request at a time and `maxlag`. Nothing else skips `fetch.allowed()`.
 - Extraction: `claude-sonnet-5-5`, streamed, effort `medium`, structured output whose predicate enum comes from the DB. Server-side `fallbacks: "default"` is on for both calls.
 - A claim is dropped unless its quote is on the fetched page (`quote_found`). Every run writes a `run_log` row (cost, drops, skips, caps).
