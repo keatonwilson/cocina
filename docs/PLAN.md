@@ -252,7 +252,7 @@ Suggested order, each its own PR series:
 **Carried over:**
 - **Issue #1:** set the hosted Supabase auth settings (Site URL, redirect URLs, email templates) from the repo. The owner set them by hand on 2026-10-30.
 - **Sign-in email:** custom SMTP; the built-in sender allows only a few emails an hour.
-- **Decisions still open:** whether the MCP server and data go public, and under what license (the README says none is chosen); and who reviews besides the owner.
+- **Decisions still open:** whether the MCP server and data go public, and under what terms (the code is MIT-licensed since 2026-10-31; the data isn't covered); and who reviews besides the owner.
 - **Scale:** `cards()` takes about 0.8 s on the server for 76 entities. Past a few hundred entities, page it, or let `getKb()` read the snapshot.
 - **Flag backlog:** in the web inbox.
 - **API drift:** `review._check` passes the deprecated `output_format=`; `output_config.format` replaces it.

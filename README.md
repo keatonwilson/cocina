@@ -110,4 +110,4 @@ CLAUDE.md    working notes for people and agents: data model, rules, conventions
 
 ## License
 
-None has been chosen yet; whether published knowledge goes public, and under what license, is still an open decision. Until then, all rights are reserved for the code and the data.
+The code is MIT-licensed: see [LICENSE](LICENSE). The license doesn't cover the knowledge cocina serves. Its quotes belong to the sources it credits, and whether the published knowledge goes public, and under what terms, is still an open decision.
