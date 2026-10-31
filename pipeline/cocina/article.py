@@ -435,8 +435,8 @@ def draft(ai: anthropic.Anthropic, brief_path: str) -> dict:
                 errors.append({"url": page["url"], "skipped": "a creator opted out"})
     sections = [{"heading": s.heading, "paragraphs": [
         [{"text": e.text, "cites": [{"source": ids[c.source], "quote": c.quote, "locator": None}
-                                    for c in e.cites if c.source in ids]} for e in p] for p in s.paragraphs]}
-        for s in out.sections]
+                                    for c in e.cites if c.source in ids]} for e in p] for p in s.paragraphs if p]}
+        for s in out.sections if any(s.paragraphs)]
     fill_locators(sections, texts)
     probs = problems(sections, texts, also=[p["text"] for p in pages])
 
@@ -517,7 +517,10 @@ def publish(slug: str) -> None:
         print(f"  {sid} = {name}")
     if input("Publish it? [y/N] ").strip().lower() != "y":
         return
-    db().rpc("accept_proposal", {"p_id": a["proposal_id"], "p_reviewer": reviewer()}).execute()
+    try:
+        db().rpc("accept_proposal", {"p_id": a["proposal_id"], "p_reviewer": reviewer()}).execute()
+    except Exception as e:  # a citation rule refused it: say which
+        sys.exit(f"Refused: {getattr(e, 'message', e)}")
     print(f"Published {slug}.")
 
 
