@@ -1,4 +1,4 @@
-# Plan: cocina, a culinary knowledgebase (phase 1 as planned, phase 2 as built, phase 3 next)
+# Plan: cocina, a culinary knowledgebase (phase 1 as planned, phase 2 as built, phase 3 under way)
 
 ## Context
 
@@ -106,13 +106,13 @@ RLS: anon reads published rows, plus `source` and `creator`. `proposal`, `run_lo
   - `concierge.test.js` covers routing with the fake models.
 - Docs: `CLAUDE.md` and a "Knowledgebase (#92)" section in `docs/AI_CONCIERGE_PLAN.md`.
 
-## Status (2026-10-30)
+## Status (2026-10-30, evening)
 
 - **Phase 1: done (2026-10-27).** cartoTaco staging answers "what is chavindeca?" from cocina with spots and a Sources line (cartoTaco #93).
 - **Phase 2: done (2026-10-30).** See below.
-- **Phase 3: next.** It starts from the section further down.
+- **Phase 3: under way.** Step 1, the gap filler, is live on staging; its scheduled run is still to be seen handling a miss alone (below). Step 3, articles, is next, ahead of the auditor: the done-criterion needs 5 published articles, not the auditor, and articles take the owner's time.
 
-The live knowledgebase (snapshot `kb-2026.10.28.2`) holds 76 foods, 1271 claims and 71 writeups. About 100 flagged proposals wait in the inbox: source conflicts and judgement calls.
+The live knowledgebase holds 77 foods, 1299 claims and 72 writeups (the last snapshot, `kb-2026.10.28.2`, had 76, 1271 and 71; the evals pin it). About 100 flagged proposals wait in the inbox: source conflicts and judgement calls.
 
 ## Phase 2, as built: curation and coverage
 
@@ -147,7 +147,7 @@ The live knowledgebase (snapshot `kb-2026.10.28.2`) holds 76 foods, 1271 claims 
   - No batch accept: auto-review covers it.
   - Creator and entity pages deferred.
 
-## Phase 3: long form and autonomy (next)
+## Phase 3: long form and autonomy (under way)
 
 **Goal:** cocina grows from what people ask, keeps its sources honest, and adds long-form pieces.
 
@@ -155,7 +155,10 @@ The live knowledgebase (snapshot `kb-2026.10.28.2`) holds 76 foods, 1271 claims 
 
 Suggested order, each its own PR series:
 
-1. **Gap filler** (built 2026-10-30, `gaps.py`; cartoTaco side on branch `feat/kb-lookups-metadata`). Turn the concierge's misses into entities.
+1. **Gap filler** (live 2026-10-30: `gaps.py`, cocina #2; cartoTaco #98 on `staging`). Turn the concierge's misses into entities.
+   - **First run**, dispatched by hand on 2026-10-30 at 17:13 Tucson time: one miss, `tlayuda`. It was researched, auto-review published 25 claims and a writeup, and it reached cartoTaco's `cards` read. About a minute and $0.22.
+   - **Still to see:** the scheduled run (06:23 Tucson time daily) handling a miss nobody started. It reads only what was asked after the last finished run, so a new food must be asked on staging first (`memela`, `tlacoyo`, `pozole`, `chilaquiles` and `enfrijolada` had no entry on 2026-10-30). Check with `gh run list --repo keatonwilson/cocina --workflow gaps.yml` and the run's `run_log` row.
+   - **Staging only, by choice:** cartoTaco's concierge isn't on `main`, so `cartotaco-production` has no traces. The gap filler reads it anyway and needs no change when the concierge ships.
    - **What cartoTaco recorded:**
      - 👍/👎 goes only to LangSmith, as feedback `user_score` on the root `concierge` run. There's no table.
      - Misses weren't recorded anywhere you could query. Tool calls aren't traced as runs, so `found: false` only showed up inside the next LLM call's input.
@@ -191,6 +194,7 @@ Suggested order, each its own PR series:
 - **Decisions still open:** whether the MCP server and data go public, and under what license (the README says none is chosen); and who reviews besides the owner.
 - **Scale:** `cards()` takes about 0.8 s on the server for 76 entities. Past a few hundred entities, page it, or let `getKb()` read the snapshot.
 - **Flag backlog:** in the web inbox.
+- **API drift:** `review._check` passes the deprecated `output_format=`; `output_config.format` replaces it.
 
 ## Phase 4 (milestone)
 
