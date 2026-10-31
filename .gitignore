@@ -7,3 +7,5 @@ node_modules/
 .vercel/
 # roborev snapshots
 /.roborev/
+# article briefs and edit files: book excerpts stay out of the public repo
+briefs/
