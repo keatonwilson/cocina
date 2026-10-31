@@ -110,7 +110,7 @@ RLS: anon reads published rows, plus `source` and `creator`. `proposal`, `run_lo
 
 - **Phase 1: done (2026-10-27).** cartoTaco staging answers "what is chavindeca?" from cocina with spots and a Sources line (cartoTaco #93).
 - **Phase 2: done (2026-10-30).** See below.
-- **Phase 3: under way.** Step 1, the gap filler, is live on staging; its scheduled run is still to be seen handling a miss alone (below). Step 3, articles, comes next, ahead of the auditor: the done-criterion needs 5 published articles, not the auditor, and articles take the owner's time. The owner approved its plan (below) on 2026-10-30. It's built in cocina #3, which awaits merge.
+- **Phase 3: under way.** Step 1, the gap filler, is live on staging; its scheduled run is still to be seen handling a miss alone (below). Step 3, articles, comes next, ahead of the auditor: the done-criterion needs 5 published articles, not the auditor, and articles take the owner's time. The owner approved its plan (below) on 2026-10-30. It's built in cocina #3, which awaits merge. Step 2, the auditor, is planned (below) with the owner's decisions of 2026-10-31, and waits for approval.
 
 The live knowledgebase holds 77 foods, 1299 claims and 72 writeups (the last snapshot, `kb-2026.10.28.2`, had 76, 1271 and 71; the evals pin it). About 100 flagged proposals wait in the inbox: source conflicts and judgement calls.
 
@@ -175,11 +175,83 @@ Suggested order, each its own PR series:
    - **Not done:**
      - `alias_gap`s are listed, not fixed (a search hint would fix them).
      - A 👎 on an answer about a known entry isn't read: it would need the lookup recorded on the trace too.
-2. **Auditor.** Keep sources honest.
-   - **Re-fetch** cited pages politely (robots and `noai` as usual). Compare the text hash `content_hash`, and re-run `quote_found` for each published quote.
-   - **When a quote is gone,** a page is dead or a new `noai` appears, propose a retire with the reason.
-   - **Needed first:** `retire` proposals have no inbox UI yet; that comes before automatic retire proposals. Or let them auto-accept when a claim has other credited evidence left.
-   - **Record when each source was last checked,** and keep `verified_at` on cards meaningful.
+2. **Auditor** (plan drafted 2026-10-31, waiting for the owner's approval). Keep sources honest: re-fetch every cited page each week, re-check every published quote, and take down what's gone.
+   - **The owner's decisions (2026-10-31):**
+     - **Gone quotes:** a quote is gone when its page is dead, the quote is no longer on it, or the page now says `noai`.
+       - When its claim still has other live evidence, the evidence row is retired automatically. The claim stays published.
+       - A claim that loses its last quote becomes a retire proposal, and a person decides it.
+     - **Rewording:** a live page whose quoted sentence changed counts as a gone quote for now. Each run counts these separately from dead pages, so it's clear whether re-quoting is worth adding.
+     - **Review:** in the terminal (`python -m cocina.review`), not the web inbox.
+     - **Opt-outs:** a page that now says `noai` has opted out, so its quotes are gone. A robots.txt that now blocks us only means we can't check: its quotes stay, and the run counts them.
+   - **Lighter than the design doc, on purpose:**
+     - **No model calls.** It re-fetches, compares `content_hash` and re-runs `quote_found`, so a run costs $0.
+     - **No hunt for disagreeing sources.** Auto-review already flags a conflict when a claim is proposed.
+     - **No per-claim re-check dates.** Every cited page is re-fetched weekly, so a card's `verified_at` is when its quote was last seen.
+     - **No archive.org copies** of dead pages. That would be a new fetch exception, like Wikidata's. Add it if dead pages turn out to take down claims nothing else backs.
+     - **No "flags on articles whose claims changed".** Articles cite sources, not claims, so the auditor checks their quotes the same way it checks evidence.
+     - **Not re-fetched:** Wikidata's 10 dataset sources (CC0 names) and sources entered by hand (books, interviews).
+   - **Migration `007_audit`:**
+     - **`source`** gains `checked_at`, `failures` (consecutive failed checks, default 0) and `check_error`.
+     - **`proposal.retires_evidence bigint[]`:** the evidence rows a `retire` takes down. A retire must now name claims, evidence rows or both.
+     - **`accept_proposal`:**
+       - A retire also retires its `retires_evidence` rows.
+       - The existing rule that a published claim needs published, credited evidence refuses an evidence retire that would leave a claim bare. The auditor has to put such a claim in `retires` instead.
+       - It refuses a claim retire when the reviewer is `auto-review` or `audit`, so only a person takes a claim down. An evidence-only retire may be accepted by `audit`.
+     - **pgTAP:**
+       - An evidence-only retire, accepted by `audit`, leaves its claim published.
+       - One that strips a claim's last evidence fails.
+       - `audit` can't accept a claim retire.
+       - A rejected retire changes nothing.
+   - **`python -m cocina.audit [--dry-run]`** (`pipeline/cocina/audit.py`):
+     1. **Collects** the web sources cited by published evidence or published articles, with each one's quotes (evidence id and claim, or article slug).
+     2. **Fetches** each with `fetch_page`, one page at a time (robots and `noai` as usual):
+        - **Same `content_hash`:** every quote is still there.
+        - **New hash:** `quote_found` runs on each quote against the whole new text, not cut to 30k.
+          - If every quote is found, the new text (cut to 30k), hash and `fetched_at` replace the stored ones.
+          - If any is gone, the old text stays, as the record of what the quote was checked against.
+        - **`noai`:** every quote from the page is gone.
+        - **robots.txt block:** unchecked. Nothing changes except `check_error`.
+        - **Any other failure** (an HTTP error, unreachable, not a web page): `failures` goes up by one. At 3 failed weekly checks in a row the page counts as dead, and its quotes are gone. A site down for a day doesn't lose anything.
+     3. **Records** each quote it found: the evidence row's `fetched_at` becomes now, which is what cards show as `verified_at` (no change to the reads), and the source gets `checked_at` and `failures = 0`.
+     4. **Acts on gone quotes:**
+        - **Still backed:** gone evidence on claims that keep other live evidence goes into one proposal (op `retire`, author `audit`, `retires_evidence`), which `audit` accepts at once.
+        - **Last quote gone:** each such claim gets its own retire proposal (author `audit`, with the reason and URL in its rationale), so a person can keep one and retire another.
+        - **Not proposed again:** a claim that already has an open audit proposal, or one a person kept.
+        - **Article quotes are never retired.** An article changes only through a version a person edits, so the run lists them instead.
+     5. **Logs a `run_log` row** (agent `audit`) with the URLs and reasons. Stdout carries counts only, because the Actions log is public:
+        - pages checked, unchanged and changed;
+        - quotes gone, split into dead, dropped from a live page, and `noai`;
+        - pages unchecked and pages failing;
+        - evidence retired, and claims proposed.
+     - **`--dry-run`** fetches and prints the counts, but writes nothing.
+   - **Review:**
+     - **`python -m cocina.review`** shows the auditor's claim retires in their own section. Each one shows:
+       - the entity and claim;
+       - the gone quote, with its source and the reason;
+       - the choices: retire (accepted as the person) or keep (rejected; it isn't proposed again).
+     - The section ends with the latest run's gone article quotes, each as "`article edit <slug>`: N quotes gone from <source>".
+     - **Other tools:**
+       - **Auto-review** skips retire proposals. `open_proposals` filters them, as it does articles.
+       - **The web inbox** shows only flagged proposals, so audit proposals don't appear there.
+     - **When a person retires a claim,** a writeup citing it stops being served until `write --all`, as with `retire` today.
+   - **The run:** `.github/workflows/audit.yml`, weekly on Sundays at 07:47 Tucson time.
+     - It needs `COCINA_SUPABASE_SERVICE_KEY` as a secret and `COCINA_SUPABASE_URL` as a variable. There's no Anthropic key.
+     - About 306 pages on 185 sites, so a few minutes of Actions time.
+   - **Test:**
+     - `tests/test_audit.py`, with no network. A fake fetch covers each case: unchanged, changed with the quote, changed without it, `noai`, a robots block, and an HTTP error three times.
+       - Each case must lead to the right outcome: verified, gone (retired when backed, proposed when it's the last quote), unchecked, failing, or dead.
+     - Plus the pgTAP tests above.
+   - **First run:**
+     1. `--dry-run` locally against the hosted database before the workflow lands.
+     2. One dispatched run.
+     3. Then the weekly schedule.
+   - **After four weekly runs:** count the quotes dropped from live pages, and the claims that waited for a person. More than a handful a week means adding re-quoting: one small Claude call finds the new wording on the same page, and it's kept when `quote_found` passes and auto-review's check agrees.
+   - **Not done:**
+     - re-quoting reworded pages (decided after four runs, above);
+     - archive.org copies;
+     - disagreeing sources;
+     - Wikidata and hand-entered sources;
+     - a web inbox view.
 3. **Articles** (plan approved 2026-10-30; built in cocina #3, not yet merged). Long-form history and technique, with a citation on every sentence. The flow: the owner writes a brief, an agent drafts, and the owner edits and publishes in the terminal. This is the one publish path only a person can take.
    - **The owner's decisions (2026-10-30):**
      - **Sources:** the owner picks them in a brief, and the drafter may add up to 4 pages it finds itself. Those are marked, and publish counts the citations that rest on them. This replaces the design doc's "human-picked sources only".
