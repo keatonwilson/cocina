@@ -10,11 +10,14 @@ through accept_proposal, so the citation rules still decide. --recheck re-judges
 already flagged (it can reject, never accept). A writeup (cocina.write) is checked sentence by sentence
 against the claims it cites. Articles (phase 3) stay human-only.
 
-In the terminal: a accept · r reject (asks why) · s skip · o open the sources · q quit
+In the terminal: a accept · r reject (asks why) · s skip · o open the sources · q quit.
+The auditor's claim retires come first (a retire · r keep: it isn't proposed again), after
+the article quotes its last run found gone from their pages.
 """
 
 import argparse
 import getpass
+from collections import defaultdict
 from urllib.parse import urlsplit
 import os
 import webbrowser
@@ -46,6 +49,8 @@ def credit(src: dict) -> str:
 
 
 def show(p: dict, n: int, total: int) -> list[str]:
+    if p.get("retires"):
+        return _show_retire(p, n, total)
     if p.get("writeup"):
         return _show_writeup(p, n, total)
     claim = (p["claim"] or [None])[0]
@@ -88,6 +93,52 @@ def _show_writeup(p: dict, n: int, total: int) -> list[str]:
             print(f"       [{cid}] {c['predicate']}: {c['value']}" if c else f"       [{cid}] (no longer published)")
             urls += [src["url"] for src in (c or {}).get("sources", []) if src.get("url") and src["url"] not in urls]
     return urls
+
+
+def audit_retires(entity: str | None = None, kind: str | None = None) -> list[dict]:
+    """Open claim retires (the auditor's), each with its claims and their quotes."""
+    rows = (db().table("proposal").select("id, author, rationale, retires, retires_evidence")
+            .eq("status", "open").eq("op", "retire").not_.is_("retires", "null").order("id").execute().data)
+    out = []
+    for p in rows:
+        p["claims"] = (db().table("claim").select(
+            "id, predicate, value, entity:entity!claim_entity_id_fkey(slug, name, kind), "
+            "evidence(id, quote, source(title, url, publisher, published_on, source_creator(creator(name))))")
+            .in_("id", p["retires"]).execute().data)
+        e = p["claims"][0]["entity"] if p["claims"] else {}
+        if (not entity or e.get("slug") == entity) and (not kind or e.get("kind") == kind):
+            out.append(p)
+    return out
+
+
+def _show_retire(p: dict, n: int, total: int) -> list[str]:
+    gone, urls = set(p["retires_evidence"] or []), []
+    for c in p["claims"]:
+        e = c["entity"]
+        print(f"\n[{n}/{total}] {e['name']} ({e['kind']}) · {c['predicate']} = \"{c['value']}\" · take it down?")
+        print(f"  {p['author']} · {p['rationale'] or ''}")
+        for ev in c["evidence"]:
+            if ev["id"] in gone:
+                print(f"  gone: \"{ev['quote']}\"")
+                print(f"     — {credit(ev['source'])}")
+                print(f"       {ev['source'].get('url') or ''}")
+                urls += [ev["source"]["url"]] if ev["source"].get("url") else []
+    return urls
+
+
+def article_notes() -> None:
+    """The article quotes the last audit found gone from their pages: a person fixes them in `article edit`."""
+    last = (db().table("run_log").select("started_at, errors").eq("agent", "audit").not_.is_("finished_at", "null")
+            .order("started_at", desc=True).limit(1).execute().data)
+    notes = defaultdict(list)
+    for e in last[0]["errors"] if last else []:
+        if "article" in e:
+            notes[e["article"]].append(e)
+    for slug, es in notes.items():
+        print(f"article {slug}: {len(es)} quote(s) gone (audit of {last[0]['started_at'][:10]}); "
+              f"fix with python -m cocina.article edit {slug}")
+        for e in es:
+            print(f"  \"{e['quote'][:100]}\" · source {e['source']}: {e['why']}")
 
 
 def _target(p: dict) -> dict | None:
@@ -383,12 +434,15 @@ def _auto_writeup(ai: anthropic.Anthropic, ent: dict, proposals: list[dict]) -> 
 
 def review(entity: str | None, kind: str | None) -> None:
     who = os.getenv("COCINA_REVIEWER") or getpass.getuser()
-    rows = open_proposals(entity, kind)
+    if not entity and not kind:
+        article_notes()
+    rows = audit_retires(entity, kind) + open_proposals(entity, kind)
     done = {"accepted": 0, "rejected": 0, "skipped": 0}
     for n, p in enumerate(rows, 1):
         urls = show(p, n, len(rows))
         while True:
-            key = input("  a accept · r reject · s skip · o open · q quit > ").strip().lower()
+            key = input("  a retire · r keep · s skip · o open · q quit > " if p.get("retires") else
+                        "  a accept · r reject · s skip · o open · q quit > ").strip().lower()
             if key == "o":
                 for u in urls:
                     webbrowser.open(u)
@@ -400,7 +454,7 @@ def review(entity: str | None, kind: str | None) -> None:
                 except Exception as e:  # a citation rule refused it: say which and move on
                     print(f"  refused: {getattr(e, 'message', e)}")
             elif key == "r":
-                reason = input("  why? ").strip() or "no reason given"
+                reason = input("  why? ").strip() or ("kept by a person" if p.get("retires") else "no reason given")
                 db().rpc("reject_proposal", {"p_id": p["id"], "p_reviewer": who, "p_reason": reason}).execute()
                 done["rejected"] += 1
             elif key == "s":

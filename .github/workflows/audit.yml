@@ -1,0 +1,36 @@
+name: Auditor
+
+# Weekly: re-fetch every page a published quote cites and re-check each quote
+# (python -m cocina.audit). No model calls. A quote gone from its page is retired
+# when its claim keeps another; a claim left with none waits for a person
+# (python -m cocina.review). This repo is public, so the job prints counts only;
+# the URLs and reasons are in the run's run_log row.
+on:
+  schedule:
+    - cron: '47 14 * * 0'   # Sundays, 07:47 in Tucson
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: audit
+  cancel-in-progress: false
+
+jobs:
+  audit:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: pipeline
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: pip install -r requirements.txt
+      - run: python -m cocina.audit
+        env:
+          COCINA_SUPABASE_URL: ${{ vars.COCINA_SUPABASE_URL }}
+          COCINA_SUPABASE_SERVICE_KEY: ${{ secrets.COCINA_SUPABASE_SERVICE_KEY }}

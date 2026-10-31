@@ -94,6 +94,12 @@ def _get(url: str, opener=urllib.request.urlopen) -> tuple[int, dict, bytes, str
 
 
 _robots: dict[str, urllib.robotparser.RobotFileParser] = {}
+_robots_down: dict[str, str] = {}   # root → why its robots.txt couldn't be read: the site is down, not refusing us
+
+
+def _root(url: str) -> str:
+    parts = urlsplit(url)
+    return f"{parts.scheme}://{parts.netloc}"
 
 
 def allowed(url: str) -> bool:
@@ -102,14 +108,17 @@ def allowed(url: str) -> bool:
     RFC 9309: a missing robots.txt (4xx) allows everything; an unreachable one or a
     server error (5xx) disallows everything. 401/403 also disallow, as the stdlib does.
     """
-    parts = urlsplit(url)
-    root = f"{parts.scheme}://{parts.netloc}"
+    root = _root(url)
     if root not in _robots:
         rp = urllib.robotparser.RobotFileParser()
         try:
             status, _, body, _ = _get(root + "/robots.txt")
         except FETCH_ERRORS:
+            _robots_down[root] = "unreachable"
             return False  # unreachable: disallow, but ask again next time rather than for the whole batch
+        _robots_down.pop(root, None)
+        if status >= 500:
+            _robots_down[root] = f"HTTP {status}"
         if status in (401, 403) or status >= 500:
             rp.disallow_all = True
         elif status >= 400:
@@ -123,7 +132,8 @@ def allowed(url: str) -> bool:
 def fetch_page(url: str) -> dict:
     """Fetch one page → {url, title, text, content_hash, fetched_at}. Raises Skipped."""
     if not allowed(url):
-        raise Skipped("disallowed by robots.txt")
+        down = _robots_down.get(_root(url))
+        raise Skipped(f"robots.txt can't be read ({down})" if down else "disallowed by robots.txt")
     try:
         status, headers, body, url = _get(url, _pages.open)   # url: where redirects ended
     except FETCH_ERRORS as e:
