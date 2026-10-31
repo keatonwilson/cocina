@@ -110,7 +110,7 @@ RLS: anon reads published rows, plus `source` and `creator`. `proposal`, `run_lo
 
 - **Phase 1: done (2026-10-27).** cartoTaco staging answers "what is chavindeca?" from cocina with spots and a Sources line (cartoTaco #93).
 - **Phase 2: done (2026-10-30).** See below.
-- **Phase 3: under way.** Step 1, the gap filler, is live on staging; its scheduled run is still to be seen handling a miss alone (below). Step 3, articles, comes next, ahead of the auditor: the done-criterion needs 5 published articles, not the auditor, and articles take the owner's time. The owner approved its plan (below) on 2026-10-30, and it's being built.
+- **Phase 3: under way.** Step 1, the gap filler, is live on staging; its scheduled run is still to be seen handling a miss alone (below). Step 3, articles, comes next, ahead of the auditor: the done-criterion needs 5 published articles, not the auditor, and articles take the owner's time. The owner approved its plan (below) on 2026-10-30. It's built in cocina #3, which awaits merge.
 
 The live knowledgebase holds 77 foods, 1299 claims and 72 writeups (the last snapshot, `kb-2026.10.28.2`, had 76, 1271 and 71; the evals pin it). About 100 flagged proposals wait in the inbox: source conflicts and judgement calls.
 
@@ -180,7 +180,7 @@ Suggested order, each its own PR series:
    - **When a quote is gone,** a page is dead or a new `noai` appears, propose a retire with the reason.
    - **Needed first:** `retire` proposals have no inbox UI yet; that comes before automatic retire proposals. Or let them auto-accept when a claim has other credited evidence left.
    - **Record when each source was last checked,** and keep `verified_at` on cards meaningful.
-3. **Articles** (plan approved 2026-10-30). Long-form history and technique, with a citation on every sentence. The flow: the owner writes a brief, an agent drafts, and the owner edits and publishes in the terminal. This is the one publish path only a person can take.
+3. **Articles** (plan approved 2026-10-30; built in cocina #3, not yet merged). Long-form history and technique, with a citation on every sentence. The flow: the owner writes a brief, an agent drafts, and the owner edits and publishes in the terminal. This is the one publish path only a person can take.
    - **The owner's decisions (2026-10-30):**
      - **Sources:** the owner picks them in a brief, and the drafter may add up to 4 pages it finds itself. Those are marked, and publish counts the citations that rest on them. This replaces the design doc's "human-picked sources only".
      - **Editing and publishing:** in the terminal, not the web inbox.
@@ -197,7 +197,7 @@ Suggested order, each its own PR series:
        - `sources` holds the owner's picks and `found` the drafter's.
      - One published article per slug. Accepting a new version retires the old one, as with writeups.
      - **`article_ok`** (deferred trigger on published rows): every sentence has text and at least one cite, and every cite names a credited source (`credited()`) with a 1–400 character quote. RLS serves an article only while `article_ok` holds, so a creator who opts out hides it, as with a writeup.
-     - **`accept_proposal`** publishes articles. It refuses when the reviewer is `auto-review` or the proposal's own author, which puts the human-only rule in the database. `reject_proposal` learns articles too.
+     - **`accept_proposal`** publishes articles. It refuses when the reviewer is `auto-review` or `draft` (the drafter), which puts the human-only rule in the database. That isn't "the proposal's own author", because a new version made in `edit` is authored by the person who then publishes it. `reject_proposal` learns articles too.
      - **Reads:** `get_article(slug)` returns the article with each cite's credit (authors, title, publisher, year, URL, locator, quote). `articles()` lists slug, title and sentence count.
      - **pgTAP:** an uncited sentence, a source with no credit and an `auto-review` accept all fail; a second version retires the first; anon can't see a proposed article.
    - **`python -m cocina.article`** (terminal):
@@ -232,6 +232,10 @@ Suggested order, each its own PR series:
      - **Test:** `tests/test_article.py`, with no network. The edit file round-trips, and the checks catch an uncited sentence, a quote not in its source, an 8-word copy, and the locator taken from the markers.
    - **MCP:** one `articles` tool. With no slug it lists the published articles; with a slug it returns one with every sentence's credit. It's a thin RPC call, like the other four tools.
    - **Cost:** about $0.15–0.30 a draft (a few searches, about 20–75k tokens in, 6–10k out), within the design doc's "under $1".
+   - **First test** (local, 2026-10-30): a throwaway al pastor brief (Wikipedia's page, plus *Planet Taco* entered without excerpts) with search on.
+     - **First draft:** 33 sentences, 9 with problems. It named sources in the prose ("Wikipedia says…"), which pulled in 8-word runs, and it left lead-in sentences uncited. The prompt now forbids both.
+     - **Second draft:** 26 sentences and 1 problem, $0.17, about a minute.
+     - **Found pages:** 20 of its 28 cites rested on pages the drafter found, one of them a restaurant's. Expect to check those at publish, or set `search = false`.
    - **Topics for the first five** (suggestions, chosen where the KB already holds history and origin claims; the owner swaps any):
      - **Al pastor:** from shawarma to the trompo (`al-pastor`).
      - **The cheese crisp and Sonora's flour tortilla:** Tucson's own (`cheese-crisp`, `burro`).
