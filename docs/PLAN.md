@@ -155,12 +155,23 @@ The live knowledgebase (snapshot `kb-2026.10.28.2`) holds 76 foods, 1271 claims 
 
 Suggested order, each its own PR series:
 
-1. **Gap filler.** Turn the concierge's misses into entities.
-   - **The signal:** in cartoTaco, `describe_dish` returns `found: false` for a food it doesn't know, and replies carry 👍/👎 feedback.
-   - **Find out first** where cartoTaco records these. LangSmith traces carry `kb_version` and the tool results; check whether there's a feedback table.
-   - **Then, on a schedule:** gather new misses, dedupe them through `search_entities`, then run `seed --add` → `research` → `review --auto`.
-   - **Where it runs:** a GitHub Actions cron (it needs `ANTHROPIC_API_KEY` and `COCINA_SUPABASE_SERVICE_KEY` as repo secrets) or Vercel cron. Either way, with a per-run cost cap. Research costs about $0.17 per entity.
-   - **Skip** names that aren't foods: an entity research finds nothing for is skipped and listed, like the six above.
+1. **Gap filler** (built 2026-10-30, `gaps.py`; cartoTaco side on branch `feat/kb-lookups-metadata`). Turn the concierge's misses into entities.
+   - **What cartoTaco recorded:**
+     - 👍/👎 goes only to LangSmith, as feedback `user_score` on the root `concierge` run. There's no table.
+     - Misses weren't recorded anywhere you could query. Tool calls aren't traced as runs, so `found: false` only showed up inside the next LLM call's input.
+   - **Why feedback and not run metadata:** on staging, 4 of the last 10 traces never received their final update. They stay `pending`, without outputs or end-of-run metadata, though the user got a reply. 👎 feedback on those same runs landed.
+     - So `/api/agent` sends each missed name as feedback `kb_miss` (value: the name), an awaited call made only on a miss.
+     - The lost final updates are a cartoTaco tracing bug still to fix. Local traces all finish.
+   - **The run:** `.github/workflows/gaps.yml`, daily at 06:23 Tucson time, needs `ANTHROPIC_API_KEY`, `COCINA_SUPABASE_SERVICE_KEY` and `LANGSMITH_API_KEY` as secrets and `COCINA_SUPABASE_URL` as a variable.
+     - **Read:** traces in `cartotaco-production` and `cartotaco-staging` with `kb_miss` feedback since the last finished run started. Each miss is weighted by 👎.
+     - **Dedupe:** `search_entities(p_all)`. A published hit is listed as an `alias_gap` (cartoTaco's matching missed a known entry). A proposed hit was tried before or is waiting for a person.
+     - **Food check:** one Claude call for the whole batch. It drops non-foods and other cuisines, fixes misspellings, and gives a kind and the usual name, which is deduped again.
+     - **Fill:** `add_entity` → `research` → `review --auto` → `write` → `review --auto`, capped at 5 entities and $2 a run. What the cap leaves goes first next run.
+     - An entity research finds nothing for stays proposed and isn't tried again, like the six above.
+   - **The repo is public:** the Actions log shows counts and added slugs only, and the `run_log` row (agent `gaps`) has the names and reasons.
+   - **Not done:**
+     - `alias_gap`s are listed, not fixed (a search hint would fix them).
+     - A 👎 on an answer about a known entry isn't read: it would need the lookup recorded on the trace too.
 2. **Auditor.** Keep sources honest.
    - **Re-fetch** cited pages politely (robots and `noai` as usual). Compare the text hash `content_hash`, and re-run `quote_found` for each published quote.
    - **When a quote is gone,** a page is dead or a new `noai` appears, propose a retire with the reason.

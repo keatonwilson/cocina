@@ -79,6 +79,7 @@ cd ../app && pnpm install
 | `python -m cocina.review --auto` | Publishes uncontested proposals and flags the rest |
 | `python -m cocina.review` | A person decides what's open, in the terminal |
 | `python -m cocina.retire <ids> \| --entity slug [--into slug] --why …` | Takes published claims, or a duplicate entity, down |
+| `python -m cocina.gaps [--dry-run]` | Researches the foods cartoTaco's concierge had no entry for (daily in Actions, capped at 5 entities and $2 a run) |
 | `python -m cocina.snapshot [--release]` | Writes the JSONL snapshot, and optionally a GitHub release |
 
 **Tests:**
