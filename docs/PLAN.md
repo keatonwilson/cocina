@@ -110,7 +110,7 @@ RLS: anon reads published rows, plus `source` and `creator`. `proposal`, `run_lo
 
 - **Phase 1: done (2026-10-27).** cartoTaco staging answers "what is chavindeca?" from cocina with spots and a Sources line (cartoTaco #93).
 - **Phase 2: done (2026-10-30).** See below.
-- **Phase 3: under way.** Step 1, the gap filler, is live on staging. It researched and published a miss asked after the previous run (`memela`, 2026-10-31), but that run was started by hand: the first scheduled run never fired (below). Step 3, articles, comes next, ahead of the auditor: the done-criterion needs 5 published articles, not the auditor, and articles take the owner's time. The owner approved its plan (below) on 2026-10-30. It's merged (cocina #3, 2026-10-31) and live: migration 006 is applied and the MCP `articles` tool answers in production. Briefs for the five suggested topics are in the git-ignored `briefs/`, waiting for the owner's books. Step 2, the auditor, is planned (below) with the owner's decisions of 2026-10-31, and waits for approval.
+- **Phase 3: under way.** Step 1, the gap filler, is live on staging. It researched and published a miss asked after the previous run (`memela`, 2026-10-31), but that run was started by hand: the first scheduled run never fired (below). Step 3, articles, comes next, ahead of the auditor: the done-criterion needs 5 published articles, not the auditor, and articles take the owner's time. The owner approved its plan (below) on 2026-10-30. It's merged (cocina #3, 2026-10-31) and live: migration 006 is applied and the MCP `articles` tool answers in production. Briefs for the five suggested topics are in the git-ignored `briefs/`, waiting for the owner's books. Step 2, the auditor, was planned and approved on 2026-10-31 and is built in cocina #4, which awaits merge.
 
 The live knowledgebase holds 78 foods, 1318 claims and 73 writeups (2026-10-31) (the last snapshot, `kb-2026.10.28.2`, had 76, 1271 and 71; the evals pin it). 112 flagged proposals wait in the inbox: source conflicts and judgement calls.
 
@@ -184,7 +184,7 @@ Suggested order, each its own PR series:
    - **Not done:**
      - `alias_gap`s are listed, not fixed (a search hint would fix them).
      - A 👎 on an answer about a known entry isn't read: it would need the lookup recorded on the trace too.
-2. **Auditor** (plan drafted 2026-10-31, waiting for the owner's approval). Keep sources honest: re-fetch every cited page each week, re-check every published quote, and take down what's gone.
+2. **Auditor** (plan approved 2026-10-31; built in cocina #4, not yet merged). Keep sources honest: re-fetch every cited page each week, re-check every published quote, and take down what's gone.
    - **The owner's decisions (2026-10-31):**
      - **Gone quotes:** a quote is gone when its page is dead, the quote is no longer on it, or the page now says `noai`.
        - When its claim still has other live evidence, the evidence row is retired automatically. The claim stays published.
@@ -254,6 +254,18 @@ Suggested order, each its own PR series:
      1. `--dry-run` locally against the hosted database before the workflow lands.
      2. One dispatched run.
      3. Then the weekly schedule.
+   - **As built (cocina #4), where it differs from the above:**
+     - **`fetch.py`:** an unreachable robots.txt, or one returning 5xx, read as a robots block, so a dead site would never have died. `Skipped` now says "robots.txt can't be read (…)", which counts as a failure.
+     - **A 401/403 on the page** counts as refusing us, like robots.txt: a bot block, not a dead page.
+     - **Auto retires:** one proposal per claim, so a refusal only affects that claim; a refused one is rejected rather than left open.
+     - **A person's claim retire** also carries the claim's gone quotes, so they're retired with it.
+     - **`accept_proposal`** also refuses a claim retire signed `draft`, and an article signed `audit`.
+     - **The article notes** print at the start of the review walk.
+     - **Not audited:** quotes on retired claims (`retire` leaves them published), and pages from creators who opted out (their quotes aren't served, and `evidence_ok` refuses to touch them).
+     - **Dead after 3 checks, not 3 weeks.** A hand-run audit between the weekly ones brings death sooner (marked `ponytail:`).
+   - **Hosted dry run, 2026-10-31** (writes nothing; six days after the first research):
+     - 308 pages: 239 unchanged, 64 changed with every quote still there, 1 missing quotes, 1 failing (a timeout) and 3 refusing us (403).
+     - The page missing quotes had been rewritten by its site on 2026-10-29. None of its 6 quotes are on it now; 4 would be retired automatically, and 2 claims would wait for a person.
    - **After four weekly runs:** count the quotes dropped from live pages, and the claims that waited for a person. More than a handful a week means adding re-quoting: one small Claude call finds the new wording on the same page, and it's kept when `quote_found` passes and auto-review's check agrees.
    - **Not done:**
      - re-quoting reworded pages (decided after four runs, above);
