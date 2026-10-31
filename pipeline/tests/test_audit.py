@@ -24,7 +24,8 @@ def fails(why):
 
 
 def src(failures=0):
-    return {"url": "https://example.com/memela", "content_hash": "old", "failures": failures, "quotes": QUOTES}
+    return {"url": "https://example.com/memela", "content_hash": "old", "failures": failures, "text": TEXT,
+            "quotes": QUOTES}
 
 
 def test_each_kind_of_page():
@@ -37,6 +38,14 @@ def test_each_kind_of_page():
     assert check(src(), fails("page opts out of AI use (noai)"))["gone"] == QUOTES      # an opt-out: all gone
     for why in ("disallowed by robots.txt", "redirect to https://x.example/a is disallowed by robots.txt", "HTTP 403"):
         assert check(src(), fails(why)) == {"outcome": "blocked", "gone": [], "page": None, "error": why}
+
+
+def test_another_page_served_in_its_place_is_not_a_rewrite():
+    wall = "Pardon our interruption. Something about your browser made us think you were a robot. Enable cookies."
+    r = check(src(), page(wall))
+    assert (r["outcome"], r["gone"], r["page"]) == ("unlike", [], None)   # unchecked: nothing retired, nothing stored
+    rewrite = "Memelas: thick masa cakes from Oaxaca, pinched at the edge, then topped with beans and cheese."
+    assert check(src(), page(rewrite))["outcome"] == "dropped"           # the same page, reworded: its quotes are gone
 
 
 def test_a_page_dies_on_its_third_failure_in_a_row():
