@@ -110,7 +110,7 @@ RLS: anon reads published rows, plus `source` and `creator`. `proposal`, `run_lo
 
 - **Phase 1: done (2026-10-27).** cartoTaco staging answers "what is chavindeca?" from cocina with spots and a Sources line (cartoTaco #93).
 - **Phase 2: done (2026-10-30).** See below.
-- **Phase 3: under way.** Step 1, the gap filler, is live on staging; its scheduled run is still to be seen handling a miss alone (below). Step 3, articles, is next, ahead of the auditor: the done-criterion needs 5 published articles, not the auditor, and articles take the owner's time.
+- **Phase 3: under way.** Step 1, the gap filler, is live on staging; its scheduled run is still to be seen handling a miss alone (below). Step 3, articles, comes next, ahead of the auditor: the done-criterion needs 5 published articles, not the auditor, and articles take the owner's time. The owner approved its plan (below) on 2026-10-30, and it's being built.
 
 The live knowledgebase holds 77 foods, 1299 claims and 72 writeups (the last snapshot, `kb-2026.10.28.2`, had 76, 1271 and 71; the evals pin it). About 100 flagged proposals wait in the inbox: source conflicts and judgement calls.
 
@@ -180,12 +180,69 @@ Suggested order, each its own PR series:
    - **When a quote is gone,** a page is dead or a new `noai` appears, propose a retire with the reason.
    - **Needed first:** `retire` proposals have no inbox UI yet; that comes before automatic retire proposals. Or let them auto-accept when a claim has other credited evidence left.
    - **Record when each source was last checked,** and keep `verified_at` on cards meaningful.
-3. **Articles.** Long-form history and technique, with a citation on every sentence.
-   - **Tables:** `article` and `passage`, with per-sentence citations to claims or source locators (a page or a timestamp).
-   - **The flow:** an article brief (the owner picks the topic and sources; books and interviews can be entered by hand), an agent draft, then the owner edits and publishes. This is the one human-only publish path.
-   - **Retrieval:** pgvector over passages for retrieval.
-   - **Copying:** reuse the 8-word copy check.
-   - **Open question:** may agents find article sources themselves, or only use the ones the owner picks?
+3. **Articles** (plan approved 2026-10-30). Long-form history and technique, with a citation on every sentence. The flow: the owner writes a brief, an agent drafts, and the owner edits and publishes in the terminal. This is the one publish path only a person can take.
+   - **The owner's decisions (2026-10-30):**
+     - **Sources:** the owner picks them in a brief, and the drafter may add up to 4 pages it finds itself. Those are marked, and publish counts the citations that rest on them. This replaces the design doc's "human-picked sources only".
+     - **Editing and publishing:** in the terminal, not the web inbox.
+     - **Citations:** a sentence cites places in sources, each a source, a quote and a locator (a book page, an interview timestamp; none for a web page). It doesn't cite claims, because history from books and interviews doesn't break down into entity/predicate facts.
+     - **Readers:** the MCP server only, for now.
+   - **Lighter than the design doc, on purpose:**
+     - **No pgvector and no `passage` table.** The drafter reads whole sources in one prompt. Stored web texts are capped at 30k characters (median 8k), so ten sources stay under about 75k tokens. Five articles don't need retrieval for readers either. Add passages and embeddings when a brief outgrows one prompt or articles reach the dozens.
+     - **No `citation` table.** Citations live in the article's jsonb, as a writeup's do.
+     - **No `kind`, `authored_by` or `version` columns.** The drafter is `proposal.author`, the person who published it is `decided_by`, and earlier versions are the slug's retired rows.
+     - **Not linked yet:** articles aren't linked to entities, and they aren't in cards, snapshots or cartoTaco until a reader needs them.
+   - **Migration `006_articles`:**
+     - `article(slug, title, sections jsonb, sources bigint[], found bigint[], status, proposal_id)`.
+       - `sections` = `[{heading, paragraphs: [[{text, cites: [{source, quote, locator}]}]]}]`.
+       - `sources` holds the owner's picks and `found` the drafter's.
+     - One published article per slug. Accepting a new version retires the old one, as with writeups.
+     - **`article_ok`** (deferred trigger on published rows): every sentence has text and at least one cite, and every cite names a credited source (`credited()`) with a 1–400 character quote. RLS serves an article only while `article_ok` holds, so a creator who opts out hides it, as with a writeup.
+     - **`accept_proposal`** publishes articles. It refuses when the reviewer is `auto-review` or the proposal's own author, which puts the human-only rule in the database. `reject_proposal` learns articles too.
+     - **Reads:** `get_article(slug)` returns the article with each cite's credit (authors, title, publisher, year, URL, locator, quote). `articles()` lists slug, title and sentence count.
+     - **pgTAP:** an uncited sentence, a source with no credit and an `auto-review` accept all fail; a second version retires the first; anon can't see a proposed article.
+   - **`python -m cocina.article`** (terminal):
+     - **The brief** is a TOML file in a git-ignored `briefs/`, since book excerpts don't belong in a public repo.
+       - It holds slug, title, the angle (what the piece should cover) and sources.
+       - A source is a KB source id, a URL, or a book or interview entered by hand: title, authors, publisher, year, ISBN, and a file of the owner's excerpts or transcript marked `[p. 112]` or `[12:30]`.
+       - `search = false` turns off the drafter's own search.
+     - **`article sources <brief>`** stores the brief's sources and prints their ids.
+       - URLs go through `fetch.py` (robots, `noai`) and `save_source`.
+       - Books and interviews become `source` rows (`work_type`, `isbn`, `citation_text`, no URL), with the excerpts as their `source_text`, which is never served.
+       - A source with neither an author nor a publisher is refused.
+     - **`article draft <brief>`:**
+       1. Stores the sources, as above.
+       2. Searches, unless `search = false`: `find_urls` with an article prompt (historians, cookbook authors, institutions; `SKIP_HOSTS`). It fetches up to 4 new pages under the same rules and records them in `found`.
+       3. Makes one Sonnet 5.5 call, streamed, with structured output through `output_config.format` (not the deprecated `output_format=`). The call gets every source's whole text, numbered. It returns sections of sentences, each citing source numbers and exact quotes, plus credit (title, authors, publisher, date) for the pages it found.
+       4. Checks each sentence:
+          - it has at least one cite;
+          - each quote is in that source's text (`quote_found`);
+          - it doesn't copy 8 consecutive words from any of the article's source texts. Writeups check only the quotes, but an article draws on whole pages.
+          - The locator isn't checked: code sets it from the last `[p. …]` or `[mm:ss]` marker before the quote.
+       5. Keeps a draft that fails a check. It costs about $0.25, and the owner edits it anyway. The problems go in the proposal's rationale and show in the edit file, and publish refuses until they're fixed. There's no retry.
+       6. Writes a `run_log` row (agent `draft`), a proposal (author `draft`; op `add`, or `change` over a published version) and the proposed article.
+     - **`article edit <slug>`** opens the proposed article in `$EDITOR`.
+       - **Layout:** `# title`, `## heading`, one sentence per line, a blank line between paragraphs, and `[n]` markers at the end of a line.
+       - **Cites:** after `---`, one line per cite, `[n] <source id> [locator] | "quote"`, then a legend naming each source. An `*` marks the drafter's finds.
+       - **Problems** show as `%` comments above their sentence.
+       - **On save** it parses and checks again, and stores whatever parses, even with problems.
+       - **No stored text:** a quote from a source whose text we don't hold (a book the owner reads from) passes on the owner's word.
+       - **A published article** is copied into a new proposed version first.
+     - **`article publish <slug>`** runs the checks and prints the counts: sentences, cites, sources, and how many cites rest on pages the drafter found. It asks for confirmation, then calls `accept_proposal` signed with `COCINA_REVIEWER` (or the login name), as the terminal review does. `article drop <slug> --why "…"` rejects the draft.
+     - **Other tools:** `review.py`'s human walk skips article proposals. Auto-review and the web inbox pass them by already: an article proposal has no claim, writeup or flag.
+     - **Test:** `tests/test_article.py`, with no network. The edit file round-trips, and the checks catch an uncited sentence, a quote not in its source, an 8-word copy, and the locator taken from the markers.
+   - **MCP:** one `articles` tool. With no slug it lists the published articles; with a slug it returns one with every sentence's credit. It's a thin RPC call, like the other four tools.
+   - **Cost:** about $0.15–0.30 a draft (a few searches, about 20–75k tokens in, 6–10k out), within the design doc's "under $1".
+   - **Topics for the first five** (suggestions, chosen where the KB already holds history and origin claims; the owner swaps any):
+     - **Al pastor:** from shawarma to the trompo (`al-pastor`).
+     - **The cheese crisp and Sonora's flour tortilla:** Tucson's own (`cheese-crisp`, `burro`).
+     - **Gringa, sincronizada, vampiro, chavindeca:** what the names mean (#92's family).
+     - **Machaca:** Sonora's dried beef (`machaca`).
+     - **Aguachile:** Sinaloa's raw shrimp in lime and chile (`aguachile`).
+   - **Not done:**
+     - claim citations;
+     - a way to leave a transition sentence uncited (every sentence cites, as in writeups; revisit if the first five chafe);
+     - the auditor re-checking article quotes (step 2 can read `sections` as it reads evidence);
+     - cartoTaco and cards.
 4. **Linker and merge.** `variant_of` and other links between entries, a real `merge` op that moves claims rather than retiring the duplicate's (`retire --into` does that today), and links surfaced in cards (`linked_from` exists).
 
 **Carried over:**
