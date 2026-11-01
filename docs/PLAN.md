@@ -110,7 +110,7 @@ RLS: anon reads published rows, plus `source` and `creator`. `proposal`, `run_lo
 
 - **Phase 1: done (2026-10-27).** cartoTaco staging answers "what is chavindeca?" from cocina with spots and a Sources line (cartoTaco #93).
 - **Phase 2: done (2026-10-30).** See below.
-- **Phase 3: under way.** Step 1, the gap filler, is live on staging. It researched and published a miss asked after the previous run (`memela`, 2026-10-31), but that run was started by hand: the first scheduled run never fired (below). Step 3, articles, comes next, ahead of the auditor: the done-criterion needs 5 published articles, not the auditor, and articles take the owner's time. The owner approved its plan (below) on 2026-10-30. It's merged (cocina #3, 2026-10-31) and live: migration 006 is applied and the MCP `articles` tool answers in production. Briefs for the five suggested topics are in the git-ignored `briefs/`, waiting for the owner's books. Step 2, the auditor, was planned, approved, merged (cocina #4) and first run on 2026-10-31. A fix for a false alarm in that run waits in cocina #5.
+- **Phase 3: under way.** Step 1, the gap filler, is live on staging. It researched and published a miss asked after the previous run (`memela`, 2026-10-31), but that run was started by hand: the first scheduled run came 4½ hours late, after it, with nothing left to do (below). Step 3, articles, comes next, ahead of the auditor: the done-criterion needs 5 published articles, not the auditor, and articles take the owner's time. The owner approved its plan (below) on 2026-10-30. It's merged (cocina #3, 2026-10-31) and live: migration 006 is applied and the MCP `articles` tool answers in production. Briefs for the five suggested topics are in the git-ignored `briefs/`, waiting for the owner's books. Step 2, the auditor, was planned, approved, merged (cocina #4) and first run on 2026-10-31. A fix for a false alarm in that run is merged (cocina #5, 2026-11-01).
 
 The live knowledgebase holds 78 foods, 1318 claims and 73 writeups (2026-10-31) (the last snapshot, `kb-2026.10.28.2`, had 76, 1271 and 71; the evals pin it). 112 flagged proposals wait in the inbox: source conflicts and judgement calls.
 
@@ -157,16 +157,17 @@ Suggested order, each its own PR series:
 
 1. **Gap filler** (live 2026-10-30: `gaps.py`, cocina #2; cartoTaco #98 on `staging`). Turn the concierge's misses into entities.
    - **First run**, dispatched by hand on 2026-10-30 at 17:13 Tucson time: one miss, `tlayuda`. It was researched, auto-review published 25 claims and a writeup, and it reached cartoTaco's `cards` read. About a minute and $0.22.
-   - **The first scheduled run, 2026-10-31, never fired.**
-     - The 06:23 Tucson slot (13:23 UTC) was the first one after `gaps.yml` reached `main` (2026-10-30, 17:07 Tucson). By 08:05 no run had been queued, and the repo has never had a `schedule` run.
+   - **The first scheduled run, 2026-10-31, came 4½ hours late.**
+     - The 06:23 Tucson slot (13:23 UTC) was the first one after `gaps.yml` reached `main` (2026-10-30, 17:07 Tucson). By 08:05 no run had been queued.
      - Nothing in the repo was wrong: the cron is valid, the file is on the default branch, the workflow is active, Actions is enabled, and the repo is public and not archived. A dispatched run worked.
      - GitHub listed no incident that day; its last Actions incident was 2026-10-30, 17:50–19:23 UTC, before the workflow existed.
-     - GitHub documents `schedule` as best effort: delayed under load, and dropped when load is high enough. A slot with no run two hours later was dropped, not delayed. GitHub keeps no scheduler log to say why.
+     - GitHub documents `schedule` as best effort: delayed under load, and dropped when load is high enough. It was delayed: the run was queued at 10:48 Tucson (17:48 UTC). Judging it dropped after two hours was wrong.
+     - By then the hand run below had taken the misses: it found none, cost $0 and proposed nothing (`run_log` 574).
    - **Started by hand instead,** 2026-10-31 at 08:24 Tucson: two misses since the previous run.
      - `memela`, asked on staging after the previous run, was researched. Auto-review published 19 claims, flagged 4 for a person (two conflicts over whether it's a sope, an origin conflict, and one unsupported ingredient) and published a writeup. About a minute and $0.22.
      - `tlayuda` came back as an `alias_gap`, most likely the same miss re-read through the 10-minute overlap, since it was asked just before the previous run.
      - That proves a miss asked on staging becomes a published entity. It doesn't yet prove "without a person starting it".
-   - **Still to see:** a scheduled run that fires on its own. Check the 2026-11-01 slot with `gh run list --repo keatonwilson/cocina --workflow gaps.yml --event schedule`. A dropped day costs nothing, because each run reads every miss since the last finished one. If slots keep dropping, a scheduler outside Actions should call the dispatch API (a Vercel cron, say).
+   - **Still to see:** a scheduled run that researches a miss, with no person starting it. A schedule run fires (above), but has had nothing to do. Check with `gh run list --repo keatonwilson/cocina --workflow gaps.yml --event schedule` and the `run_log` rows (agent `gaps`). The 2026-11-01 slot hadn't been queued by 08:43 Tucson, 2h20m late. A late or dropped day costs nothing, because each run reads every miss since the last finished one. If slots keep dropping, a scheduler outside Actions should call the dispatch API (a Vercel cron, say).
    - **Staging only, by choice:** cartoTaco's concierge isn't on `main`, so `cartotaco-production` has no traces. The gap filler reads it anyway and needs no change when the concierge ships.
    - **What cartoTaco recorded:**
      - 👍/👎 goes only to LangSmith, as feedback `user_score` on the root `concierge` run. There's no table.
@@ -184,7 +185,7 @@ Suggested order, each its own PR series:
    - **Not done:**
      - `alias_gap`s are listed, not fixed (a search hint would fix them).
      - A 👎 on an answer about a known entry isn't read: it would need the lookup recorded on the trace too.
-2. **Auditor** (plan approved 2026-10-31; merged in cocina #4 and live on 2026-10-31; a fix waits in cocina #5). Keep sources honest: re-fetch every cited page each week, re-check every published quote, and take down what's gone.
+2. **Auditor** (plan approved 2026-10-31; merged in cocina #4 and live on 2026-10-31; a fix merged in cocina #5 on 2026-11-01). Keep sources honest: re-fetch every cited page each week, re-check every published quote, and take down what's gone.
    - **The owner's decisions (2026-10-31):**
      - **Gone quotes:** a quote is gone when its page is dead, the quote is no longer on it, or the page now says `noai`.
        - When its claim still has other live evidence, the evidence row is retired automatically. The claim stays published.
@@ -271,7 +272,7 @@ Suggested order, each its own PR series:
      - **One real rewrite** (a blog, rewritten 2026-10-29). Its 4 quotes on claims with other quotes were retired automatically. 2 claims wait for a person.
      - **Two false alarms:** chron.com and houstonchronicle.com served the runner another page with 200 OK. From a home connection every quote is still on both, but 13 claims were proposed for retirement. Nothing published changed, because those claims waited for a person.
        - The 13 proposals were closed as `audit`, with the reason.
-       - Cocina #5 leaves a page unchecked when it keeps under a quarter of its stored words (measured: a real rewrite kept 37%, other pages 1–19%). Proposals the auditor closes itself no longer count as kept by a person.
+       - Cocina #5 (merged 2026-11-01, before the first scheduled run) leaves a page unchecked when it keeps under a quarter of its stored words (measured: a real rewrite kept 37%, other pages 1–19%). Proposals the auditor closes itself no longer count as kept by a person.
    - **After four weekly runs:** count the quotes dropped from live pages, and the claims that waited for a person. More than a handful a week means adding re-quoting: one small Claude call finds the new wording on the same page, and it's kept when `quote_found` passes and auto-review's check agrees.
    - **Not done:**
      - re-quoting reworded pages (decided after four runs, above);
