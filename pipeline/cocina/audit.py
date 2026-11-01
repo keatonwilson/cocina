@@ -19,6 +19,7 @@ reasons go to the run_log row (agent `audit`). --dry-run fetches and counts, wri
 """
 
 import argparse
+import re
 import time
 from collections import Counter, defaultdict
 from datetime import datetime, timezone
@@ -32,6 +33,10 @@ from cocina.research import PAGE_CHARS, quote_found
 # ponytail: counts checks, not weeks; a hand-run audit between weekly ones brings death sooner
 DEAD_AFTER = 3   # failed checks in a row
 PAUSE = 1.0      # seconds between fetches: ~300 pages is about 10 minutes
+# ponytail: word overlap tells a rewrite from another page (a bot wall served as 200 OK). Measured
+# 2026-10-31: a real rewrite kept 37% of its words, unchanged pages 74–100%, other pages 1–19%.
+# The start of what was served goes to run_log, to judge a misjudgement by.
+SAME_PAGE = 0.25
 WHY = {"dropped": "the quote is no longer on the page", "noai": "the page now opts out of AI use",
        "dead": f"the page failed {DEAD_AFTER} checks running"}
 
@@ -46,10 +51,17 @@ def kind(why: str) -> str:
     return "failed"
 
 
+def kept(old: str, new: str) -> float:
+    """The share of a page's words (5+ letters) still on the page served now."""
+    words = lambda t: set(re.findall(r"[^\W\d_]{5,}", t.casefold()))  # noqa: E731
+    o = words(old)
+    return len(o & words(new)) / max(1, len(o))
+
+
 def check(src: dict, fetch=fetch_page) -> dict:
     """One page → {outcome, gone: its quotes no longer there, page: new text to store, error}.
 
-    src: {url, content_hash, failures, quotes: [{quote, evidence + claim | article}]}"""
+    src: {url, content_hash, failures, text (the stored copy), quotes: [{quote, evidence + claim | article}]}"""
     try:
         page = fetch(src["url"])
     except Skipped as e:
@@ -60,6 +72,9 @@ def check(src: dict, fetch=fetch_page) -> dict:
     if page["content_hash"] == src["content_hash"]:
         return {"outcome": "same", "gone": [], "page": None, "error": None}
     gone = [q for q in src["quotes"] if not quote_found(q["quote"], page["text"])]
+    if gone and kept(src["text"], page["text"]) < SAME_PAGE:   # not the page we cited: can't tell
+        served = " ".join(page["text"].split())[:300]
+        return {"outcome": "unlike", "gone": [], "page": None, "error": "served another page", "served": served}
     return {"outcome": "dropped" if gone else "changed", "gone": gone, "page": None if gone else page, "error": None}
 
 
@@ -90,8 +105,10 @@ def collect() -> list[dict]:
     ids = list(quotes)
     srcs = all_rows(lambda: db().table("source").select("id, url, content_hash, failures")
                     .in_("id", ids).eq("work_type", "web page").not_.is_("url", "null").order("url"))
+    texts = {t["source_id"]: t["text"] for t in all_rows(
+        lambda: db().table("source_text").select("source_id, text").in_("source_id", ids).order("source_id"), page=100)}
     # An opted-out creator's quotes aren't served, and its pages aren't ours to re-read
-    return [{**s, "quotes": quotes[s["id"]]} for s in srcs if credited(s["id"])]
+    return [{**s, "text": texts.get(s["id"], ""), "quotes": quotes[s["id"]]} for s in srcs if credited(s["id"])]
 
 
 def _why(qs: list[dict]) -> str:
@@ -116,7 +133,8 @@ def audit(dry_run: bool) -> None:
             continue
         pages[r["outcome"]] += 1
         if r["outcome"] not in ("same", "changed"):
-            log.append({"url": src["url"], "outcome": r["outcome"], "error": r["error"]})
+            # what was served goes to run_log only: source.check_error is public
+            log.append({"url": src["url"], "outcome": r["outcome"], "error": r["error"], **({"served": r["served"]} if "served" in r else {})})
         for q in r["gone"]:
             quotes_gone[r["outcome"]] += 1
             if "evidence" in q:
@@ -148,9 +166,10 @@ def audit(dry_run: bool) -> None:
                           .in_("claim_id", list(gone)).eq("status", "published").order("id")):
             if e["id"] not in out and credited(e["source_id"]):
                 backing[e["claim_id"]] = backing.get(e["claim_id"], 0) + 1
-    waiting = all_rows(lambda: db().table("proposal").select("retires").eq("author", "audit")
+    waiting = all_rows(lambda: db().table("proposal").select("retires, status, decided_by").eq("author", "audit")
                        .in_("status", ["open", "rejected"]).not_.is_("retires", "null").order("id"))
-    skip = {c for p in waiting for c in p["retires"]}
+    # Waiting for a person, or kept by one (the auditor closing its own mistake doesn't count)
+    skip = {c for p in waiting if p["status"] == "open" or p["decided_by"] != "audit" for c in p["retires"]}
     auto, person = decide(gone, backing, skip)
 
     retired = accepted = proposed = 0
@@ -172,7 +191,7 @@ def audit(dry_run: bool) -> None:
     articles = sum(1 for e in log if "article" in e)
     print(f"{len(srcs)} pages: {pages['same']} unchanged, {pages['changed']} changed with every quote, "
           f"{pages['dropped']} missing a quote, {pages['noai']} now noai, {pages['dead']} dead, "
-          f"{pages['failing']} failing, {pages['blocked']} refusing us" + (f", {pages['error']} errors" if pages["error"] else ""))
+          f"{pages['failing']} failing, {pages['blocked']} refusing us, {pages['unlike']} serving another page" + (f", {pages['error']} errors" if pages["error"] else ""))
     print(f"{sum(quotes_gone.values())} quotes gone ({quotes_gone['dropped']} dropped, {quotes_gone['dead']} dead, "
           f"{quotes_gone['noai']} noai): {retired if not dry_run else sum(map(len, auto.values()))} retired, "
           f"{proposed if not dry_run else len(person)} claims for a person, "
