@@ -28,8 +28,9 @@ Rules:
 comparison or praise that the facts don't state.
 - Write 2 to 4 plain sentences in English. The first stands alone: what the food is, in one line.
 - Every sentence lists in `claims` the ids of the facts it states, and states nothing beyond them.
-- Where facts disagree (two different places of origin, say), say that sources differ rather than choosing \
-one. A place inside another (Hermosillo and Sonora) is not a disagreement: use the more specific one.
+- Where facts disagree (sources crediting different birthplaces, say), say that sources differ rather than \
+choosing one. A place inside another (Hermosillo and Sonora) is not a disagreement: use the more specific one. \
+Several places of origin with no fact disputing them are a region: name them together.
 - Write in your own words; never copy a fact's wording at length.
 - Leave out a fact that doesn't fit a short description rather than forcing it in."""
 

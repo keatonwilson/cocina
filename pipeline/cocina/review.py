@@ -169,9 +169,12 @@ Flag a proposal only when:
 - unsupported: none of its quotes states the fact. The quote is real, but says something else, \
 only hints at it, or is about a different food.
 - conflict: it can't be true alongside another fact listed, published or proposed: "uses corn \
-tortilla" against "uses flour tortilla", or two different places of origin. Facts that can all be \
-true at once (several ingredients, regional variants, a second name, a place inside another place \
-such as Mexico City and Mexico) are not conflicts. Flag every proposal on each side of a conflict. A \
+tortilla" against "uses flour tortilla", or sources that disagree on where a food was born (one \
+credits Puebla, another credits Mexico City as the place it began, or a quote calls the origin \
+disputed). Facts that can all be true at once (several ingredients, regional variants, a second \
+name, a place inside another place such as Mexico City and Mexico, or several places of origin that \
+together make up the region a food comes from, such as Puebla, Hidalgo and Guerrero for a dish of \
+central Mexico) are not conflicts. Flag every proposal on each side of a conflict. A \
 proposal that restates a rejected fact conflicts with it.
 
 For an unsupported proposal, set `borderline` true only when a careful editor could reasonably \
