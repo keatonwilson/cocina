@@ -106,11 +106,11 @@ RLS: anon reads published rows, plus `source` and `creator`. `proposal`, `run_lo
   - `concierge.test.js` covers routing with the fake models.
 - Docs: `CLAUDE.md` and a "Knowledgebase (#92)" section in `docs/AI_CONCIERGE_PLAN.md`.
 
-## Status (2026-10-31)
+## Status (2026-11-04)
 
 - **Phase 1: done (2026-10-27).** cartoTaco staging answers "what is chavindeca?" from cocina with spots and a Sources line (cartoTaco #93).
 - **Phase 2: done (2026-10-30).** See below.
-- **Phase 3: under way.** Step 1, the gap filler, is live on staging. It researched and published a miss asked after the previous run (`memela`, 2026-10-31), but that run was started by hand: the first scheduled run came 4½ hours late, after it, with nothing left to do (below). Step 3, articles, comes next, ahead of the auditor: the done-criterion needs 5 published articles, not the auditor, and articles take the owner's time. The owner approved its plan (below) on 2026-10-30. It's merged (cocina #3, 2026-10-31) and live: migration 006 is applied and the MCP `articles` tool answers in production. Briefs for the five suggested topics are in the git-ignored `briefs/`, waiting for the owner's books. Step 2, the auditor, was planned, approved, merged (cocina #4) and first run on 2026-10-31. A fix for a false alarm in that run is merged (cocina #5, 2026-11-01).
+- **Phase 3: under way.** Step 1, the gap filler, is live on staging. It researched and published a miss asked after the previous run (`memela`, 2026-10-31), but that run was started by hand: the first scheduled run came 4½ hours late, after it, with nothing left to do (below). Step 3, articles, comes next, ahead of the auditor: the done-criterion needs 5 published articles, not the auditor, and articles take the owner's time. The owner approved its plan (below) on 2026-10-30. It's merged (cocina #3, 2026-10-31) and live: migration 006 is applied and the MCP `articles` tool answers in production. Briefs for the five suggested topics are in the git-ignored `briefs/`, waiting for the owner's books. Step 2, the auditor, was planned, approved, merged (cocina #4) and first run on 2026-10-31. A fix for a false alarm in that run is merged (cocina #5, 2026-11-01), and the first weekly run (2026-11-01) raised no false alarms. Both schedules now fire on their own, hours late. What's left is the owner's: the five articles, the auditor's claim retires and the flag backlog.
 
 The live knowledgebase holds 78 foods, 1318 claims and 73 writeups (2026-10-31) (the last snapshot, `kb-2026.10.28.2`, had 76, 1271 and 71; the evals pin it). 112 flagged proposals wait in the inbox: source conflicts and judgement calls.
 
@@ -167,7 +167,8 @@ Suggested order, each its own PR series:
      - `memela`, asked on staging after the previous run, was researched. Auto-review published 19 claims, flagged 4 for a person (two conflicts over whether it's a sope, an origin conflict, and one unsupported ingredient) and published a writeup. About a minute and $0.22.
      - `tlayuda` came back as an `alias_gap`, most likely the same miss re-read through the 10-minute overlap, since it was asked just before the previous run.
      - That proves a miss asked on staging becomes a published entity. It doesn't yet prove "without a person starting it".
-   - **Still to see:** a scheduled run that researches a miss, with no person starting it. A schedule run fires (above), but has had nothing to do. Check with `gh run list --repo keatonwilson/cocina --workflow gaps.yml --event schedule` and the `run_log` rows (agent `gaps`). The 2026-11-01 slot hadn't been queued by 08:43 Tucson, 2h20m late. A late or dropped day costs nothing, because each run reads every miss since the last finished one. If slots keep dropping, a scheduler outside Actions should call the dispatch API (a Vercel cron, say).
+   - **Scheduled runs since** (2026-11-01, 11-02, 11-03): each fired on its own, 5–7 hours after its 06:23 slot (11:27, 15:21, 13:08 Tucson), and each found 0 misses ($0). No slot was dropped, so there's no need for a scheduler outside Actions yet.
+   - **Still to see:** a scheduled run that researches a miss, with no person starting it. Scheduled runs fire (above), but no one has asked the staging concierge about a food it doesn't know since 2026-10-31. Check with `gh run list --repo keatonwilson/cocina --workflow gaps.yml --event schedule` and the `run_log` rows (agent `gaps`). The 2026-11-01 slot hadn't been queued by 08:43 Tucson, 2h20m late. A late or dropped day costs nothing, because each run reads every miss since the last finished one. If slots keep dropping, a scheduler outside Actions should call the dispatch API (a Vercel cron, say).
    - **Staging only, by choice:** cartoTaco's concierge isn't on `main`, so `cartotaco-production` has no traces. The gap filler reads it anyway and needs no change when the concierge ships.
    - **What cartoTaco recorded:**
      - 👍/👎 goes only to LangSmith, as feedback `user_score` on the root `concierge` run. There's no table.
@@ -273,6 +274,10 @@ Suggested order, each its own PR series:
      - **Two false alarms:** chron.com and houstonchronicle.com served the runner another page with 200 OK. From a home connection every quote is still on both, but 13 claims were proposed for retirement. Nothing published changed, because those claims waited for a person.
        - The 13 proposals were closed as `audit`, with the reason.
        - Cocina #5 (merged 2026-11-01, before the first scheduled run) leaves a page unchecked when it keeps under a quarter of its stored words (measured: a real rewrite kept 37%, other pages 1–19%). Proposals the auditor closes itself no longer count as kept by a person.
+   - **First weekly run** (2026-11-01, 12:13 Tucson, 4½ hours after its slot; 11 minutes, $0):
+     - 308 pages: 256 unchanged, 31 changed with every quote still there, 2 missing a quote, 17 refusing us, and 2 serving another page (left unchecked by #5: no false alarms this time). None dead, failing or `noai`.
+     - 3 quotes dropped from live pages: 1 claim proposed for a person, and 2 already waiting from the first run. None retired automatically.
+     - So 3 claim retires wait for the owner in `python -m cocina.review`.
    - **After four weekly runs:** count the quotes dropped from live pages, and the claims that waited for a person. More than a handful a week means adding re-quoting: one small Claude call finds the new wording on the same page, and it's kept when `quote_found` passes and auto-review's check agrees.
    - **Not done:**
      - re-quoting reworded pages (decided after four runs, above);
@@ -355,7 +360,7 @@ Suggested order, each its own PR series:
 - **Decisions still open:** whether the MCP server and data go public, and under what terms (the code is MIT-licensed since 2026-10-31; the data isn't covered); and who reviews besides the owner.
 - **Scale:** `cards()` takes about 0.8 s on the server for 76 entities. Past a few hundred entities, page it, or let `getKb()` read the snapshot.
 - **Flag backlog:** in the web inbox.
-- **API drift:** `review._check` passes the deprecated `output_format=`; `output_config.format` replaces it.
+- **API drift:** `review._check` passes the deprecated `output_format=`; `output_config.format` replaces it. The workflows moved to `actions/checkout@v5`, `setup-python@v6` and `setup-node@v5` (2026-11-04), which run on Node 24 (Node 20 actions are deprecated); `pnpm/action-setup@v4` and `supabase/setup-cli@v1` are unchanged.
 
 ## Phase 4 (milestone)
 
