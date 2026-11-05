@@ -43,9 +43,12 @@ class Writeup(BaseModel):
     sentences: list[Sentence]
 
 
+def _words(text: str) -> list[str]:
+    return [w for w in (w.strip(".,;:!?()\"'") for w in _flat(text).split()) if w]
+
+
 def _ngrams(text: str, n: int = COPY_WORDS) -> set[tuple[str, ...]]:
-    words = [w.strip(".,;:!?()\"'") for w in _flat(text).split()]
-    words = [w for w in words if w]
+    words = _words(text)
     return {tuple(words[i:i + n]) for i in range(len(words) - n + 1)}
 
 
