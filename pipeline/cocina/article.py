@@ -55,9 +55,9 @@ from pydantic import BaseModel
 
 from cocina.db import client as db
 from cocina.fetch import Skipped, fetch_page
-from cocina.research import FALLBACK, MODEL, PAGE_CHARS, _cost, _flat, find_urls, quote_found, save_source
+from cocina.research import FALLBACK, MODEL, PAGE_CHARS, _cost, _flat, _loose, find_urls, quote_found, save_source
 from cocina.review import credit
-from cocina.write import COPY_WORDS, _ngrams
+from cocina.write import COPY_WORDS, _ngrams, _words
 
 REPO = Path(__file__).resolve().parents[2]
 MAX_FOUND = 4            # pages the drafter may add to the owner's
@@ -136,8 +136,8 @@ def sentences(sections: list[dict]):
 
 def locate(quote: str, text: str) -> str | None:
     """The page or timestamp a quote sits under: the last [p. 112] or [12:30] marker before it."""
-    flat = _flat(text)
-    at = flat.find(_flat(quote))
+    flat = _loose(text)
+    at = flat.find(_loose(quote))
     marks = MARKER.findall(flat[:at]) if at >= 0 else []
     return marks[-1] if marks else None
 
@@ -155,7 +155,7 @@ def problems(sections: list[dict], texts: dict[int, str | None], also: list[str]
     """What stops these sections publishing, by sentence place (() for the whole article).
     `texts`: every source a cite may name → the text we hold of it (None: entered by hand, taken on
     the owner's word). `also`: other texts the article drew on, for the copying check."""
-    grams = set().union(*(_ngrams(t) for t in [*texts.values(), *also] if t))
+    grams = source_grams(texts, also)
     out: dict[tuple, list[str]] = {}
     if not any(True for _ in sentences(sections)):
         out[()] = ["the article has no sentences"]
@@ -178,6 +178,79 @@ def problems(sections: list[dict], texts: dict[int, str | None], also: list[str]
         if why:
             out[place] = why
     return out
+
+
+def source_grams(texts: dict[int, str | None], also: list[str] = ()) -> set[tuple[str, ...]]:
+    return set().union(*(_ngrams(t) for t in [*texts.values(), *also] if t))
+
+
+def copied(text: str, grams: set[tuple[str, ...]]) -> list[str]:
+    """The runs of a sentence's words that a source also has, COPY_WORDS or more long."""
+    words = _words(text)
+    hit = {j for i in range(len(words) - COPY_WORDS + 1)
+           if tuple(words[i:i + COPY_WORDS]) in grams for j in range(i, i + COPY_WORDS)}
+    runs, run = [], []
+    for i, w in enumerate(words + [""]):
+        if i in hit:
+            run.append(w)
+        elif run:
+            runs.append(" ".join(run))
+            run = []
+    return runs
+
+
+class Reworded(BaseModel):
+    n: int
+    text: str
+
+
+class Rewording(BaseModel):
+    sentences: list[Reworded]
+
+
+REWORD_SYSTEM = f"""You reword sentences of a cited article that copy their sources too closely. \
+Write each numbered sentence again in your own words: the same facts, no more and no fewer, so it \
+still says only what its quotes state. Never keep {COPY_WORDS} or more words in a row of the copied \
+text shown: reorder, shorten or use other words. Reply with every sentence, by its number."""
+
+
+def reword(ai: anthropic.Anthropic, sections: list[dict], texts: dict[int, str | None],
+           also: list[str] = ()) -> tuple[int, float]:
+    """One call for the sentences that copy a source; a rewrite is kept only if it leaves the
+    sentence with fewer problems and no new one. Returns (sentences reworded, cost)."""
+    grams = source_grams(texts, also)
+    todo = [(place, e) for place, e in sentences(sections) if _ngrams(e["text"]) & grams]
+    if not todo:
+        return 0, 0.0
+    prompt = "\n\n".join(
+        f"{n}. {e['text']}\n   Its quotes: " + " / ".join(f'"{c["quote"]}"' for c in e["cites"])
+        + "\n   Copied: " + " / ".join(f'"{r}"' for r in copied(e["text"], grams))
+        for n, (_, e) in enumerate(todo, 1))
+    with ai.beta.messages.stream(
+        model=MODEL,
+        max_tokens=8000,
+        output_config={"effort": "low"},
+        system=REWORD_SYSTEM,
+        messages=[{"role": "user", "content": prompt}],
+        output_format=Rewording,
+        **FALLBACK,
+    ) as stream:
+        resp = stream.get_final_message()
+    cost = round(_cost(resp.usage), 4)
+    if resp.parsed_output is None:
+        return 0, cost
+    before = problems(sections, texts, also)
+    done = 0
+    for r in resp.parsed_output.sentences:
+        if not 1 <= r.n <= len(todo) or not r.text.strip():
+            continue
+        place, e = todo[r.n - 1]
+        old, e["text"] = e["text"], r.text.strip()
+        if set(problems(sections, texts, also).get(place, [])) < set(before.get(place, [])):
+            done += 1
+        else:
+            e["text"] = old
+    return done, cost
 
 
 # ---------------------------------------------------------------------------
@@ -438,7 +511,10 @@ def draft(ai: anthropic.Anthropic, brief_path: str) -> dict:
                                     for c in e.cites if c.source in ids]} for e in p] for p in s.paragraphs if p]}
         for s in out.sections if any(s.paragraphs)]
     fill_locators(sections, texts)
-    probs = problems(sections, texts, also=[p["text"] for p in pages])
+    also = [p["text"] for p in pages]
+    reworded, c = reword(ai, sections, texts, also)   # the drafter's usual slip: copying its quote
+    cost = round(cost + c, 4)
+    probs = problems(sections, texts, also)
 
     count = sum(1 for _ in sentences(sections))
     run = db().table("run_log").insert({
@@ -448,10 +524,10 @@ def draft(ai: anthropic.Anthropic, brief_path: str) -> dict:
     proposal = db().table("proposal").insert({
         "op": "change" if _live(slug) else "add", "author": "draft", "run_id": run["id"],
         "rationale": f"{count} sentences citing {len(_cited(sections))} sources ({len(found)} found by the drafter); "
-                     f"{len(probs)} with problems"}).execute().data[0]
+                     f"{reworded} reworded for copying; {len(probs)} with problems"}).execute().data[0]
     db().table("article").insert({"slug": slug, "title": brief["title"], "sections": sections, "sources": picked,
                                   "found": found, "proposal_id": proposal["id"]}).execute()
-    return {"slug": slug, "sentences": count, "found": len(found), "problems": len(probs), "cost_usd": cost}
+    return {"slug": slug, "sentences": count, "found": len(found), "reworded": reworded, "problems": len(probs), "cost_usd": cost}
 
 
 def edit(slug: str) -> None:

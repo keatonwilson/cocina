@@ -63,10 +63,15 @@ def _flat(s: str) -> str:
     return " ".join(s.split()).casefold()
 
 
+def _loose(s: str) -> str:
+    """_flat without apostrophes: "1960s" is the page's "1960’s", every word still has to match."""
+    return _flat(s).replace("'", "")
+
+
 def quote_found(quote: str, text: str) -> bool:
     """The anti-hallucination check: the quote must really be on the page."""
-    q = _flat(quote)
-    return 12 <= len(q) and len(quote) <= 400 and q in _flat(text)
+    q = _loose(quote)
+    return 12 <= len(q) and len(quote) <= 400 and q in _loose(text)
 
 
 def group_claims(claims: list[dict]) -> list[dict]:

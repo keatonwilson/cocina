@@ -19,6 +19,8 @@ def test_quote_check_keeps_real_quotes_and_drops_invented_ones():
     assert quote_found('two corn tortillas with meat and cheese, elsewhere called "sincronizadas"', PAGE)
     assert not quote_found("Chavindecas come from Puebla.", PAGE)
     assert not quote_found("Chavinda", PAGE)  # too short to stand as evidence
+    assert quote_found("during the 1960s in Puebla", "Later, during the 1960’s in Puebla, they opened")  # apostrophes don't count
+    assert not quote_found("during the 1970s in Puebla", "Later, during the 1960’s in Puebla, they opened")
 
 
 def test_agreeing_sources_become_one_claim_with_evidence_from_each():

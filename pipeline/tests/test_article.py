@@ -86,3 +86,35 @@ Two sentence. [2]
             raise AssertionError("should not parse")
         except ValueError:
             pass
+
+
+def test_reword_keeps_a_rewrite_only_when_it_stops_the_copying():
+    from types import SimpleNamespace
+    from cocina.article import Reworded, Rewording, copied, reword, source_grams
+
+    copying = "Tacos al pastor are usually served with pineapple, onion and cilantro."
+    assert copied(copying, source_grams(TEXTS)) == ["tacos al pastor are usually served with pineapple onion and cilantro"]
+    sections = [{"heading": None, "paragraphs": [[
+        sentence(copying, (207, "served with pineapple, onion and cilantro")),
+        sentence("Their Mexican-born children swapped the lamb for pork and marinated it.",
+                 (41, "swapped the lamb for pork and marinated it with chiles")),
+    ]]}]
+
+    class Stream:   # the model's two rewrites: one in its own words, one still copying
+        def __init__(self, **kw):
+            assert "1. Tacos al pastor" in kw["messages"][0]["content"]
+        def __enter__(self):
+            out = Rewording(sentences=[Reworded(n=1, text="Pineapple, onion and cilantro usually come with it."),
+                                       Reworded(n=2, text="Their Mexican-born children swapped the lamb for pork and marinated it, too.")])
+            usage = SimpleNamespace(input_tokens=1000, output_tokens=100, cache_creation_input_tokens=0, cache_read_input_tokens=0)
+            return SimpleNamespace(get_final_message=lambda: SimpleNamespace(parsed_output=out, usage=usage))
+        def __exit__(self, *a):
+            pass
+
+    ai = SimpleNamespace(beta=SimpleNamespace(messages=SimpleNamespace(stream=Stream)))
+    done, cost = reword(ai, sections, TEXTS)
+    first, second = sections[0]["paragraphs"][0]
+    assert (done, first["text"]) == (1, "Pineapple, onion and cilantro usually come with it.")
+    assert second["text"].startswith("Their Mexican-born children swapped") and not second["text"].endswith("too.")
+    assert cost > 0
+    assert reword(None, [{"heading": None, "paragraphs": [[first]]}], TEXTS) == (0, 0.0)   # nothing copies: no call
