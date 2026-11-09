@@ -34,3 +34,9 @@ jobs:
         env:
           COCINA_SUPABASE_URL: ${{ vars.COCINA_SUPABASE_URL }}
           COCINA_SUPABASE_SERVICE_KEY: ${{ secrets.COCINA_SUPABASE_SERVICE_KEY }}
+      # The inbox's sign-in settings live in the dashboard; fail if they drift (issue #1)
+      - run: python -m cocina.authcheck https://cocina-tau-six.vercel.app
+        if: always()
+        env:
+          COCINA_SUPABASE_URL: ${{ vars.COCINA_SUPABASE_URL }}
+          COCINA_SUPABASE_SERVICE_KEY: ${{ secrets.COCINA_SUPABASE_SERVICE_KEY }}
