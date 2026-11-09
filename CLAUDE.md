@@ -16,7 +16,7 @@ cocina is a curated knowledgebase of Mexican food concepts (dishes, salsas, chil
 - `supabase test db` – citation-rule tests
 - `cd pipeline && .venv/bin/pytest -q` – quote check, grouping, page text, article checks and edit file, the auditor's judgements (no network)
 - `cd app && pnpm check && pnpm test` – type check, node:test; `pnpm dev` serves `/mcp` and `/review`
-- Inbox sign-in setup on the hosted project (dashboard, not migrations): Authentication → URL Configuration: Site URL = the deploy URL, Redirect URLs include `<deploy>/auth/confirm` (and `http://localhost:5173/auth/confirm` for dev); Authentication → Emails: the Magic Link and Confirm signup templates hold `supabase/templates/sign_in.html` (`config.toml` applies it to local stacks)
+- Inbox sign-in setup on the hosted project (dashboard, not migrations): Authentication → URL Configuration: Site URL = the deploy URL, Redirect URLs include `<deploy>/auth/confirm` (and `http://localhost:5173/auth/confirm` for dev); Authentication → Emails: the Magic Link and Confirm signup templates hold `supabase/templates/sign_in.html` (`config.toml` applies it to local stacks). `python -m cocina.authcheck <deploy>` (weekly, after the audit) fails if the Site URL or redirect list drifts; the templates aren't checked
 - `python -m cocina.seed` – proposed entities from cartoTaco's spec tables and Salsa Atlas (read-only, anon key; re-runnable)
 - `python -m cocina.research <slug>...` – search → fetch → extract → quote check → proposals (~$0.15–0.25 and ~30 s per entity)
 - `python -m cocina.wikidata <slug>... | --all` – English/Spanish labels and aliases of the one Wikidata food item named exactly like the entity, proposed as `also_known_as` claims (source: Wikidata, CC0); free
