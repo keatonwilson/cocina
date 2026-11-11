@@ -2,7 +2,7 @@
 
 import copy
 
-from cocina.article import fill_locators, locate, parse, problems, render
+from cocina.article import comment_start, fill_locators, locate, parse, problems, render
 
 BOOK = """[p. 112] In the 1930s Lebanese immigrants in Puebla sold shawarma cooked on a vertical spit.
 [p. 113] Their Mexican-born children swapped the lamb for pork and marinated it with chiles."""
@@ -118,3 +118,19 @@ def test_reword_keeps_a_rewrite_only_when_it_stops_the_copying():
     assert second["text"].startswith("Their Mexican-born children swapped") and not second["text"].endswith("too.")
     assert cost > 0
     assert reword(None, [{"heading": None, "paragraphs": [[first]]}], TEXTS) == (0, 0.0)   # nothing copies: no call
+
+
+def test_a_quote_from_the_comment_thread_is_a_problem():
+    page = ("By Kevin\n5 Comments\nJump to Recipe\n"   # a count link up top isn't the thread
+            "Cheese crisps are an open-faced tortilla with melted cheese.\n" + "Grate the cheese.\n" * 20 + "3 Comments\n"
+            "Bob said...\nCheese crisps were originated at Araneta's Mexico Inn in the 1950's.")
+    assert comment_start(page) == page.index("3 Comments")
+    assert comment_start("Leave a Reply Cancel reply\nNice.") == 0
+    assert comment_start(WEB) == len(WEB)
+    s = [{"heading": None, "paragraphs": [[
+        sentence("It's a flat tortilla under cheese.", (5, "an open-faced tortilla with melted cheese")),
+        sentence("It began at a Tucson restaurant.", (5, "originated at Araneta's Mexico Inn")),
+    ]]}]
+    out = problems(s, {5: page})
+    assert (0, 0, 0) not in out
+    assert any("comment thread" in w for w in out[(0, 0, 1)])
