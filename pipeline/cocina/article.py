@@ -64,6 +64,11 @@ MAX_FOUND = 4            # pages the drafter may add to the owner's
 # ponytail: whole sources in one prompt (~100k tokens); passages + pgvector when a brief outgrows it
 MAX_CHARS = 400_000
 # A page or a timestamp, as _flat() leaves it: [p. 112], [p. xii], [p. 12-13], [12:30], [1:02:03]
+# ponytail: line heuristic for WordPress/Blogspot threads; strip comment elements in fetch.py if it misses.
+# A "5 Comments" heading counts only with a thread marker soon after: blogs also print it as a link up top.
+COMMENT_HEADING = re.compile(r"^\s*(?:\d+\s+)?(?:comments?|responses?|replies)(?:\s*\(\d+\))?\s*:?\s*$", re.I | re.M)
+THREAD = re.compile(r"^\s*leave a (?:reply|comment)\b|\bcancel reply\b|\bsaid(?:\.\.\.|…)\s*$"
+                    r"|^\s*(?:reply|reader interactions)\s*$", re.I | re.M)
 MARKER = re.compile(r"\[(p\. ?[0-9ivxlcdm]+(?:-[0-9ivxlcdm]+)?|\d{1,2}:\d{2}(?::\d{2})?)\]")
 
 SEARCH_PROMPT = """Search the web for reliable sources for an article about Mexican food: "{title}". {angle}
@@ -84,6 +89,7 @@ leads into others ("Sources differ on the date.") has nothing to cite: join it t
 states the facts.
 - Write in your own words: never copy eight or more words in a row from a source, even a common \
 phrase or a list of ingredients. Reorder or shorten it.
+- Quote only the page's own text: never a comment, reply or reader review under it.
 - Don't name sources in the text ("Wikipedia says"): the citations credit them. Where sources \
 disagree, say so, name who says what, and cite each side rather than choosing one.
 - Sections with short plain headings, each of one to four paragraphs. About {words} words in all; \
@@ -151,6 +157,15 @@ def fill_locators(sections: list[dict], texts: dict[int, str | None]) -> None:
                 c["locator"] = locate(c["quote"], text)
 
 
+def comment_start(text: str) -> int:
+    """Where a page's comment thread starts (len(text) if it has none)."""
+    for h in COMMENT_HEADING.finditer(text):
+        if THREAD.search(text, h.end(), h.end() + 300):
+            return h.start()
+    m = THREAD.search(text)
+    return m.start() if m else len(text)
+
+
 def problems(sections: list[dict], texts: dict[int, str | None], also: list[str] = ()) -> dict[tuple, list[str]]:
     """What stops these sections publishing, by sentence place (() for the whole article).
     `texts`: every source a cite may name → the text we hold of it (None: entered by hand, taken on
@@ -173,6 +188,8 @@ def problems(sections: list[dict], texts: dict[int, str | None], also: list[str]
                 why.append(f"the quote from source {sid} is {len(quote)} characters (1–400)")
             elif texts[sid] is not None and not quote_found(quote, texts[sid]):
                 why.append(f'the quote isn\'t in source {sid}: "{quote[:70]}"')
+            elif texts[sid] is not None and not quote_found(quote, texts[sid][:comment_start(texts[sid])]):
+                why.append(f"the quote from source {sid} is from the comment thread under the page, not the page itself")
         if _ngrams(e["text"]) & grams:
             why.append(f"it copies {COPY_WORDS} or more words in a row from a source")
         if why:
