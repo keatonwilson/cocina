@@ -38,7 +38,8 @@ def snapshot(release: bool) -> Path:
     print(f"{path}: {len(cards)} entities, {claims} claims, kb_version {version}")
     if release:
         subprocess.run(["gh", "release", "create", tag, str(path), "--title", tag,
-                        "--notes", f"{len(cards)} entities, {claims} claims. kb_version {version}."], check=True)
+                        "--notes", f"{len(cards)} entities, {claims} claims. kb_version {version}.\n\n"
+                        "Data: CC BY 4.0 (credit cocina and the cited sources); quotes belong to their authors."], check=True)
     return path
 
 

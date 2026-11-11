@@ -54,11 +54,14 @@ jobs:
         env:
           COCINA_SUPABASE_URL: http://127.0.0.1:9
           COCINA_SUPABASE_ANON_KEY: placeholder
-          MCP_TOKEN: ci
         run: |
           pnpm preview --host 127.0.0.1 --port 4173 --strictPort &
           curl -s -o /dev/null --retry 30 --retry-connrefused --retry-delay 1 http://127.0.0.1:4173/login   # up within 30 s, or fail
           test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:4173/login)" = 200
           test "$(curl -s -o /dev/null -w '%{http_code}' http://127.0.0.1:4173/review)" = 303
-          curl -sf -X POST http://127.0.0.1:4173/mcp -H 'Authorization: Bearer ci' -H 'Content-Type: application/json' \
+          # no token: the endpoint is public
+          curl -sf -X POST http://127.0.0.1:4173/mcp -H 'Content-Type: application/json' \
             -H 'Accept: application/json, text/event-stream' -d '{"jsonrpc":"2.0","id":1,"method":"tools/list"}' | grep -q '"get_entity"'
+          # a batch would multiply every request the rate limit counts
+          test "$(curl -s -o /dev/null -w '%{http_code}' -X POST http://127.0.0.1:4173/mcp -H 'Content-Type: application/json' \
+            -H 'Accept: application/json, text/event-stream' -d '[{"jsonrpc":"2.0","id":1,"method":"tools/list"}]')" = 400

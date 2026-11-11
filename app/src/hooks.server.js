@@ -1,5 +1,5 @@
 // Sign-in for the review inbox (Supabase magic links, session in cookies).
-// /mcp is left alone: it has its own bearer token.
+// /mcp is left alone: it's public.
 import { createServerClient } from '@supabase/ssr';
 import { error, redirect } from '@sveltejs/kit';
 import { env } from '$env/dynamic/private';
