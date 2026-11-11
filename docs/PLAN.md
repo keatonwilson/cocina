@@ -106,13 +106,13 @@ RLS: anon reads published rows, plus `source` and `creator`. `proposal`, `run_lo
   - `concierge.test.js` covers routing with the fake models.
 - Docs: `CLAUDE.md` and a "Knowledgebase (#92)" section in `docs/AI_CONCIERGE_PLAN.md`.
 
-## Status (2026-11-04)
+## Status (2026-11-09)
 
 - **Phase 1: done (2026-10-27).** cartoTaco staging answers "what is chavindeca?" from cocina with spots and a Sources line (cartoTaco #93).
 - **Phase 2: done (2026-10-30).** See below.
-- **Phase 3: under way.** Step 1, the gap filler, is live on staging. It researched and published a miss asked after the previous run (`memela`, 2026-10-31), but that run was started by hand: the first scheduled run came 4½ hours late, after it, with nothing left to do (below). Step 3, articles, comes next, ahead of the auditor: the done-criterion needs 5 published articles, not the auditor, and articles take the owner's time. The owner approved its plan (below) on 2026-10-30. It's merged (cocina #3, 2026-10-31) and live: migration 006 is applied and the MCP `articles` tool answers in production. Briefs for the five suggested topics are in the git-ignored `briefs/`, waiting for the owner's books. Step 2, the auditor, was planned, approved, merged (cocina #4) and first run on 2026-10-31. A fix for a false alarm in that run is merged (cocina #5, 2026-11-01), and the first weekly run (2026-11-01) raised no false alarms. Both schedules now fire on their own, hours late. What's left is the owner's: the five articles, the auditor's claim retires and the flag backlog.
+- **Phase 3: under way.** Step 1, the gap filler, is live on staging. It researched and published a miss asked after the previous run (`memela`, 2026-10-31), but that run was started by hand: the first scheduled run came 4½ hours late, after it, with nothing left to do (below). Step 3, articles, is done for the criterion: five are published (2026-11-09), all from web sources (below). Step 2, the auditor, was planned, approved, merged (cocina #4) and first run on 2026-10-31. A fix for a false alarm in that run is merged (cocina #5, 2026-11-01), and the first weekly run (2026-11-01) raised no false alarms. Both schedules now fire on their own, hours late, and the weekly audit now also checks the inbox's sign-in settings (`authcheck`, cocina #8, closing #1). **One criterion is left:** a scheduled gap-filler run that researches and publishes a miss. The runs succeed daily but have had no new misses to work on since 2026-11-02, so the owner needs to ask the staging concierge about foods cocina doesn't know. After that come the auditor's claim retires and the flag backlog.
 
-The live knowledgebase holds 78 foods, 1318 claims and 73 writeups (2026-10-31) (the last snapshot, `kb-2026.10.28.2`, had 76, 1271 and 71; the evals pin it). 112 flagged proposals wait in the inbox: source conflicts and judgement calls.
+The live knowledgebase holds 78 foods, 1327 claims, 73 writeups and 5 articles (2026-11-09) (the last snapshot, `kb-2026.10.28.2`, had 76, 1271 and 71; the evals pin it). 86 flagged proposals wait in the inbox: source conflicts and judgement calls.
 
 ## Phase 2, as built: curation and coverage
 
@@ -347,6 +347,10 @@ Suggested order, each its own PR series:
      - **Gringa, sincronizada, vampiro, chavindeca:** what the names mean (#92's family).
      - **Machaca:** Sonora's dried beef (`machaca`).
      - **Aguachile:** Sinaloa's raw shrimp in lime and chile (`aguachile`).
+   - **Published (all five by 2026-11-09):** `al-pastor`, `aguachile`, `cheese-crisp`, `machaca` and `quesadilla-names`, each signed by the owner. All are web-only: no book excerpts yet. The last four ran with `search = false` on sources vetted by hand. The drafter's search mostly found recipe blogs.
+     - **What the drafts needed:** the first draft passed every check each time. It still needed a person, from a handful of fixes up to about 20 for `quesadilla-names`. It cited blog comments as the post author's words (#10), and it wrote meta sentences ("the sources don't explain…"). It also stretched beyond its quotes and guessed pronouns from names. Expect to read every sentence against its quote before publishing.
+     - **Gaps the rule forces:** every sentence cites, so an article can't say that a name's origin is unknown unless a source says so. `quesadilla-names` gives no origin for sincronizada or chavindeca.
+     - **Bug:** `fetch.py` adds SVG `<title>` text to a page's title (#9). The affected titles were fixed by hand.
    - **Not done:**
      - claim citations;
      - a way to leave a transition sentence uncited (every sentence cites, as in writeups; revisit if the first five chafe);
@@ -355,7 +359,7 @@ Suggested order, each its own PR series:
 4. **Linker and merge.** `variant_of` and other links between entries, a real `merge` op that moves claims rather than retiring the duplicate's (`retire --into` does that today), and links surfaced in cards (`linked_from` exists).
 
 **Carried over:**
-- **Issue #1:** set the hosted Supabase auth settings (Site URL, redirect URLs, email templates) from the repo. The owner set them by hand on 2026-10-30.
+- **Hosted auth settings** (issue #1, closed): set by hand in the dashboard. `authcheck` catches drift in the Site URL and redirects every week, but not in the email templates.
 - **Sign-in email:** custom SMTP; the built-in sender allows only a few emails an hour.
 - **Decisions still open:** whether the MCP server and data go public, and under what terms (the code is MIT-licensed since 2026-10-31; the data isn't covered); and who reviews besides the owner.
 - **Scale:** `cards()` takes about 0.8 s on the server for 76 entities. Past a few hundred entities, page it, or let `getKb()` read the snapshot.
