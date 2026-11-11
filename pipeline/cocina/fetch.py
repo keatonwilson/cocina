@@ -39,7 +39,7 @@ class _Text(HTMLParser):
     def handle_starttag(self, tag, attrs):
         if tag in SKIP:
             self._skip += 1
-        elif tag == "title":
+        elif tag == "title" and not self.title and not self._skip:  # the page's own, not an <svg> icon's
             self._in_title = True
         elif tag == "meta":
             a = {k: (v or "").lower() for k, v in attrs}
