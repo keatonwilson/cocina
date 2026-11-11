@@ -49,6 +49,14 @@ def test_page_text_skips_chrome_and_sees_noai():
     assert noai
 
 
+def test_title_ignores_svg_icon_titles():
+    title, _, _ = html_to_text(
+        "<html><head><title>White Sonora Wheat – Native Seeds</title></head><body>"
+        "<svg><title>Facebook</title></svg><p>Wheat.</p><svg><title>Visa</title></svg></body></html>"
+    )
+    assert title == "White Sonora Wheat – Native Seeds"
+
+
 def test_robots_txt_follows_rfc_9309(monkeypatch):
     replies = {
         "https://gone.example": (404, Message(), b"", ""),           # missing: allowed
