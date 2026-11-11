@@ -84,7 +84,7 @@ RLS: anon reads published rows, plus `source` and `creator`. `proposal`, `run_lo
 ### 3. MCP server (`app/src/routes/mcp/+server.js`)
 - Stateless Streamable HTTP via `@modelcontextprotocol/sdk`. If its transport wants Node req/res, use a plain Vercel Node function instead.
 - Four tools, each a thin call to an RPC above: `search(query, kind?)`, `get_entity(slug)`, `related(slug, relation?, hops?)`, `sources(slug)`. Every response includes `kb_version`.
-- Read-only by construction (anon key, published-only RLS). A bearer `MCP_TOKEN` check stays until the "public or not" decision is made.
+- Read-only by construction (anon key, published-only RLS). Public since 2026-11-11 (the bearer `MCP_TOKEN` is gone); a Vercel Firewall rate limit guards it.
 
 ### 4. Research and review the eval entities
 - Run `research.py` for chavindeca, gringa, salsa macha and their neighbours (sincronizada, etc.), then as many of the ~70 seed entities as time allows (about $0.05–0.20 each). Review in the terminal.
@@ -361,7 +361,8 @@ Suggested order, each its own PR series:
 **Carried over:**
 - **Hosted auth settings** (issue #1, closed): set by hand in the dashboard. `authcheck` catches drift in the Site URL and redirects every week, but not in the email templates.
 - **Sign-in email:** custom SMTP; the built-in sender allows only a few emails an hour.
-- **Decisions still open:** whether the MCP server and data go public, and under what terms (the code is MIT-licensed since 2026-10-31; the data isn't covered); and who reviews besides the owner.
+- **Decided 2026-11-11:** the MCP server is public, with no token. cocina's data (claims, writeups, articles, snapshots) is CC BY 4.0, and quotes belong to their authors. Every answer carries `license`. Abuse is handled by a per-IP rate limit on `/mcp` in Vercel's Firewall (dashboard).
+- **Decision still open:** who reviews besides the owner.
 - **Scale:** `cards()` takes about 0.8 s on the server for 76 entities. Past a few hundred entities, page it, or let `getKb()` read the snapshot.
 - **Flag backlog:** in the web inbox.
 - **API drift:** `review._check` passes the deprecated `output_format=`; `output_config.format` replaces it. The workflows moved to `actions/checkout@v5`, `setup-python@v6` and `setup-node@v5` (2026-11-04), which run on Node 24 (Node 20 actions are deprecated); `pnpm/action-setup@v4` and `supabase/setup-cli@v1` are unchanged.
@@ -376,7 +377,7 @@ Suggested order, each its own PR series:
 - **Pipeline:**
   - `pytest pipeline/tests`: quote check drops an invented quote, grouping merges three agreeing sources, `names.golden.json` resolves through `search_entities` against local Supabase.
   - `python -m cocina.research chavindeca` against the real API, then `python -m cocina.review` to accept, then `cards()` shows the claim with author and publisher.
-- **MCP:** `claude mcp add --transport http cocina <url>/mcp --header "Authorization: Bearer …"`, then ask Claude Code "what is chavindeca?" and check that the result carries sources and `kb_version`.
+- **MCP:** `claude mcp add --transport http cocina <url>/mcp`, then ask Claude Code "what is chavindeca?" and check that the result carries sources and `kb_version`.
 - **cartoTaco:**
   - `pnpm check && pnpm test && pnpm eval --category dish --judge` against the pinned snapshot.
   - On staging (after the PR lands on `staging`), ask "What is chavindeca?" in the chat panel: the reply explains it, names spots 10 and 16, and shows a Sources line. The LangSmith trace carries `kb_version`.

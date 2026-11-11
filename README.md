@@ -53,10 +53,9 @@ Reads such as `cards()`, `get_entity()` and the anonymous REST API return publis
 
 ## Using it
 
-- **MCP server:** `https://cocina-tau-six.vercel.app/mcp` (Streamable HTTP, read-only, bearer token for now). It has four tools: `search`, `get_entity`, `related` and `sources`. Every answer carries `kb_version`, the time of the last accepted change.
+- **MCP server:** `https://cocina-tau-six.vercel.app/mcp` (Streamable HTTP, read-only, public). It has five tools: `search`, `get_entity`, `related`, `sources` and `articles`. Every answer carries `kb_version`, the time of the last accepted change.
   ```
-  claude mcp add -s user --transport http cocina https://cocina-tau-six.vercel.app/mcp \
-    --header "Authorization: Bearer <token>"
+  claude mcp add -s user --transport http cocina https://cocina-tau-six.vercel.app/mcp
   ```
 - **Snapshots:** each [release](https://github.com/keatonwilson/cocina/releases) attaches `kb-YYYY.MM.DD.jsonl`, one published card per line. Consumers pin a tag, so changes to the knowledge never make their tests flaky. cartoTaco's evals do this.
 
@@ -110,4 +109,6 @@ CLAUDE.md    working notes for people and agents: data model, rules, conventions
 
 ## License
 
-The code is MIT-licensed: see [LICENSE](LICENSE). The license doesn't cover the knowledge cocina serves. Its quotes belong to the sources it credits, and whether the published knowledge goes public, and under what terms, is still an open decision.
+- **Code:** MIT. See [LICENSE](LICENSE).
+- **Data:** cocina's published knowledge (its claims, writeups, articles and snapshots) is [CC BY 4.0](https://creativecommons.org/licenses/by/4.0/). Credit cocina and the sources it cites. Every MCP answer carries this in `license`.
+- **Quotes and source texts** belong to their authors. cocina quotes them with credit, and the CC license doesn't cover them.

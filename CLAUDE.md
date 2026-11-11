@@ -7,7 +7,7 @@ cocina is a curated knowledgebase of Mexican food concepts (dishes, salsas, chil
 - `supabase/migrations/` – the schema, citation rules and read functions (`001_core`), proposal flags (`002`), writeups (`003`), retire (`005`), articles (`006`), the auditor (`007`)
 - `supabase/tests/` – pgTAP tests of the citation rules (`supabase test db`)
 - `pipeline/` – Python 3.12: `seed`, `research`, `write`, `review`, `snapshot`, `gaps`, `article`, `audit` (run as `python -m cocina.<name>` from `pipeline/`)
-- `app/` – SvelteKit on Vercel: the read-only MCP server at `/mcp` and the review inbox at `/review` (Supabase magic-link sign-in, `REVIEWERS` allowlist; decisions go through the same `accept_proposal`/`reject_proposal`, run server-side with the secret key and signed with the reviewer's email)
+- `app/` – SvelteKit on Vercel: the public, read-only MCP server at `/mcp` (no token; one JSON-RPC message per request, 16 KiB max, no batches; data CC BY 4.0, every answer carries `license`) and the review inbox at `/review` (Supabase magic-link sign-in, `REVIEWERS` allowlist; decisions go through the same `accept_proposal`/`reject_proposal`, run server-side with the secret key and signed with the reviewer's email)
 - `.env` at the repo root is shared by the pipeline (symlinked as `pipeline/.env`) and the app (`kit.env.dir`); see `.env.example`
 
 ## Commands
@@ -17,6 +17,7 @@ cocina is a curated knowledgebase of Mexican food concepts (dishes, salsas, chil
 - `cd pipeline && .venv/bin/pytest -q` – quote check, grouping, page text, article checks and edit file, the auditor's judgements (no network)
 - `cd app && pnpm check && pnpm test` – type check, node:test; `pnpm dev` serves `/mcp` and `/review`
 - Inbox sign-in setup on the hosted project (dashboard, not migrations): Authentication → URL Configuration: Site URL = the deploy URL, Redirect URLs include `<deploy>/auth/confirm` (and `http://localhost:5173/auth/confirm` for dev); Authentication → Emails: the Magic Link and Confirm signup templates hold `supabase/templates/sign_in.html` (`config.toml` applies it to local stacks). `python -m cocina.authcheck <deploy>` (weekly, after the audit) fails if the Site URL or redirect list drifts; the templates aren't checked
+- MCP abuse guard (dashboard, not code): Vercel → Firewall → a rate-limit rule on `/mcp` per IP (429 past it)
 - `python -m cocina.seed` – proposed entities from cartoTaco's spec tables and Salsa Atlas (read-only, anon key; re-runnable)
 - `python -m cocina.research <slug>...` – search → fetch → extract → quote check → proposals (~$0.15–0.25 and ~30 s per entity)
 - `python -m cocina.wikidata <slug>... | --all` – English/Spanish labels and aliases of the one Wikidata food item named exactly like the entity, proposed as `also_known_as` claims (source: Wikidata, CC0); free
